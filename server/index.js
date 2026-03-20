@@ -737,7 +737,11 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`AI Demo server listening on http://localhost:${PORT}`);
-});
+// 本地 node 启动；Vercel 通过 api/index.mjs 加载本文件，禁止 listen
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`AI Demo server listening on http://localhost:${PORT}`);
+  });
+}
 
+export default app;

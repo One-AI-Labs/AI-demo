@@ -12,6 +12,7 @@
     "express": "^4.19.2",
     "morgan": "^1.10.0",
     "node-fetch": "^3.3.2",
+    "serverless-http": "^4.0.0",
     "uuid": "^9.0.1"
   }
 }
