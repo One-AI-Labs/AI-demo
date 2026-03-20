@@ -3,7 +3,15 @@
   const sections = document.querySelectorAll('.page-section');
   const errorToastEl = document.getElementById('errorToast');
   const errorToastBody = document.getElementById('errorToastBody');
-  const errorToast = errorToastEl ? new bootstrap.Toast(errorToastEl) : null;
+  // 避免 Bootstrap CDN 未加载时整段脚本抛错，导致导航等逻辑全部失效
+  let errorToast = null;
+  if (errorToastEl && typeof bootstrap !== 'undefined' && bootstrap.Toast) {
+    try {
+      errorToast = new bootstrap.Toast(errorToastEl);
+    } catch (e) {
+      console.warn('Toast 初始化失败', e);
+    }
+  }
 
   function showError(message) {
     if (!errorToast) {

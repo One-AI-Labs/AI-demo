@@ -497,7 +497,8 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
     integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
     crossorigin="anonymous"></script>
-  <script src="main.js"></script>
+  <!-- 相对路径：Express 静态根为 web/ → /main.js。Vercel 根路径 / 需配合 vercel.json 将 /main.js 指到 /web/main.js -->
+  <script src="main.js" defer></script>
 </body>
 
 </html>

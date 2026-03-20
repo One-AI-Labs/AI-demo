@@ -24,8 +24,10 @@ const assets = new Map();
 const seedanceTaskToJobId = new Map();
 const sunoTaskToJobId = new Map();
 
-// 静态前端
-app.use(express.static(path.join(__dirname, '..', 'web')));
+// 静态前端：根路径提供 index.html / main.js；/web/* 与生产 Vercel 路径一致，避免误用 /web/main.js 时 404
+const webStatic = path.join(__dirname, '..', 'web');
+app.use('/web', express.static(webStatic));
+app.use(express.static(webStatic));
 
 // 避免页面自动请求 favicon 造成无意义 404
 app.get('/favicon.ico', (req, res) => {
