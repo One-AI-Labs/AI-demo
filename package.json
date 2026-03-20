@@ -1,0 +1,17 @@
+{
+  "name": "ai-multimodal-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "平板端 AI 多模态投资人 Demo（文生图/视频/音乐/对话），基于 Bootstrap + Node.js + OpenRouter",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.1"
+  }
+}

@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <title>AI 创意乐园</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Bootstrap 5 CDN -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <style>
+    :root {
+      --bg-soft: #f4f7ff;
+      --text-main: #1f2a44;
+      --primary-soft: #6a7dff;
+      --mint-soft: #5ed9c8;
+      --sun-soft: #ffc968;
+      --pink-soft: #ff8ecf;
+    }
+
+    body {
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at 10% 10%, #dce7ff 0%, transparent 30%),
+        radial-gradient(circle at 90% 0%, #d5fff8 0%, transparent 28%),
+        linear-gradient(180deg, #f8faff 0%, #f3f7ff 100%);
+      min-height: 100vh;
+    }
+
+    .glass-nav {
+      background-color: rgba(255, 255, 255, 0.75);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid rgba(106, 125, 255, 0.15);
+    }
+
+    .brand-title {
+      font-weight: 800;
+      color: #3a4fb8;
+      letter-spacing: .2px;
+    }
+
+    .hero-card {
+      border: 0;
+      border-radius: 24px;
+      background: linear-gradient(135deg, #6a7dff 0%, #5ed9c8 100%);
+      color: #fff;
+      box-shadow: 0 12px 32px rgba(58, 79, 184, .25);
+    }
+
+    .soft-pill {
+      border: 0;
+      border-radius: 999px;
+      padding: .5rem 1rem;
+      color: #2f3d75;
+      background: rgba(255, 255, 255, 0.9);
+      font-weight: 600;
+      font-size: .9rem;
+    }
+
+    .fun-nav .nav-link {
+      border: 0;
+      border-radius: 14px;
+      margin-left: .4rem;
+      color: #536081;
+      font-weight: 600;
+      padding: .45rem .85rem;
+      transition: all .2s ease;
+    }
+
+    .fun-nav .nav-link.active {
+      color: #fff;
+      background: linear-gradient(135deg, #6a7dff 0%, #8f6aff 100%);
+      box-shadow: 0 8px 18px rgba(106, 125, 255, .35);
+    }
+
+    .fun-nav .nav-link:hover {
+      transform: translateY(-1px);
+      color: #36437a;
+    }
+
+    .page-section {
+      display: none;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all .2s ease;
+    }
+
+    .page-section.active {
+      display: block;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .chat-message-user {
+      background: linear-gradient(135deg, #6a7dff 0%, #7f90ff 100%);
+      border-radius: 14px 14px 4px 14px;
+      color: #fff;
+    }
+
+    .chat-message-ai {
+      background: #ffffff;
+      border: 1px solid #dfe7ff;
+      border-radius: 14px 14px 14px 4px;
+      color: #33416f;
+    }
+
+    .chat-composer {
+      border-top: 1px solid #e5e9ff;
+      padding-top: .75rem;
+    }
+
+    .chat-layout-row {
+      min-height: clamp(460px, 72vh, 860px);
+    }
+
+    .chat-centered-wrap {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+
+    .chat-messages {
+      flex: 1 1 auto;
+      min-height: 220px;
+      max-height: none;
+      overflow: auto;
+    }
+
+    .fun-card {
+      border: 1px solid rgba(106, 125, 255, 0.16);
+      background-color: rgba(255, 255, 255, 0.92);
+      border-radius: 20px;
+      box-shadow: 0 8px 20px rgba(76, 102, 191, .08);
+    }
+
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: #33408a;
+    }
+
+    .form-control,
+    .form-select {
+      border-radius: 14px;
+      border-color: #dce3ff;
+      color: #34436e;
+    }
+
+    .form-control:focus,
+    .form-select:focus {
+      border-color: #9badff;
+      box-shadow: 0 0 0 .2rem rgba(106, 125, 255, .2);
+    }
+
+    .btn-lg-touch {
+      border-radius: 14px;
+      font-weight: 700;
+      min-height: 46px;
+    }
+
+    .chip-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+    }
+
+    .chip-btn {
+      border: 0;
+      border-radius: 999px;
+      padding: .4rem .85rem;
+      font-size: .85rem;
+      background: #eef2ff;
+      color: #4c5793;
+      font-weight: 600;
+    }
+
+    .chip-btn:hover {
+      background: #dfe7ff;
+    }
+
+    .result-card {
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid #e5e9ff;
+      background: #fff;
+    }
+
+    .placeholder-art {
+      background:
+        linear-gradient(135deg, rgba(106, 125, 255, 0.17), rgba(255, 142, 207, 0.15)),
+        repeating-linear-gradient(45deg, rgba(106, 125, 255, 0.08) 0 10px, rgba(94, 217, 200, 0.08) 10px 20px);
+      color: #4f5fa1;
+    }
+
+    @media (max-width: 991.98px) {
+      .chat-layout-row {
+        min-height: auto;
+      }
+
+      .chat-messages {
+        min-height: 48vh;
+      }
+
+      .chat-centered-wrap {
+        max-width: 100%;
+      }
+    }
+
+    @media (max-width: 575.98px) {
+      .chat-composer .input-group {
+        display: flex;
+        flex-direction: column;
+        gap: .5rem;
+      }
+
+      .chat-composer .input-group .btn {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <nav class="navbar navbar-expand-md glass-nav sticky-top">
+    <div class="container-fluid">
+      <a class="navbar-brand brand-title" href="#">AI 创意乐园</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+        aria-controls="navbarNav" aria-expanded="false" aria-label="切换导航">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav ms-auto fun-nav">
+          <li class="nav-item">
+            <button class="nav-link btn btn-link text-decoration-none active" data-target="overviewSection">总览</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link btn btn-link text-decoration-none" data-target="chatSection">AI 对话</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link btn btn-link text-decoration-none" data-target="imageSection">文生图</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link btn btn-link text-decoration-none" data-target="videoSection">文生视频</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link btn btn-link text-decoration-none" data-target="musicSection">文生音乐</button>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container-fluid py-3 py-md-4">
+    <section class="mb-3 mb-md-4">
+      <div class="hero-card p-3 p-md-4">
+        <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+          <div>
+            <h1 class="h3 mb-2">把想象力变成图像、视频和音乐</h1>
+            <p class="mb-0 opacity-75">平板友好 · 轻触即生成 · 面向孩子的简约创意体验</p>
+          </div>
+          <div class="d-flex gap-2 flex-wrap">
+            <span class="soft-pill">对话引导</span>
+            <span class="soft-pill">多模态生成</span>
+            <span class="soft-pill">实时看板</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 总览页 -->
+    <section id="overviewSection" class="page-section active">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card fun-card h-100">
+            <div class="card-body">
+              <h5 class="card-title">今日生成概览</h5>
+              <p class="mb-2 text-secondary small">彩色卡片 + 实时数据，更有“产品已成型”感。</p>
+              <div class="d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="text-secondary small">总任务数</div>
+                  <div class="stat-value" id="statTotalJobs">0</div>
+                </div>
+                <div>
+                  <div class="text-secondary small">已完成</div>
+                  <div class="stat-value text-success" id="statCompletedJobs">0</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="card fun-card h-100">
+            <div class="card-body">
+              <h5 class="card-title">演示脚本建议</h5>
+              <ol class="small text-secondary mb-0">
+                <li>先在「AI 对话」里描述一个业务场景，然后一键改写为图/视频/音乐提示词。</li>
+                <li>切到「文生图」，快速生成 2–3 张同主题不同风格的图片。</li>
+                <li>切到「文生视频」，发起一个 5–10 秒的视频任务，同时讲解异步流水线。</li>
+                <li>切到「文生音乐」，生成一段和前面场景统一风格的背景音乐。</li>
+                <li>最后回到「总览」，展示当前任务量、完成量和未来可以扩展的数据指标。</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AI 对话页 -->
+    <section id="chatSection" class="page-section">
+      <div class="chat-centered-wrap">
+        <div class="row g-3 chat-layout-row justify-content-center">
+          <div class="col-lg-10">
+            <div id="chatSettingsPanel" class="card fun-card mb-3 d-none">
+              <div class="card-body">
+                <h5 class="card-title">会话设定</h5>
+                <form id="chatForm" class="needs-validation" novalidate>
+                  <div class="mb-3">
+                    <label for="chatSystemPrompt" class="form-label">系统角色</label>
+                    <textarea id="chatSystemPrompt" class="form-control form-control-sm" rows="3"
+                      aria-label="系统角色">你是一个产品经理，帮我把想法讲清楚给投资人。</textarea>
+                  </div>
+                  <div class="mb-3">
+                    <label for="chatUserInput" class="form-label">问题 / 场景描述</label>
+                    <textarea id="chatUserInput" class="form-control" rows="4" required
+                      aria-label="用户消息"></textarea>
+                    <div class="invalid-feedback">请先输入要咨询的内容。</div>
+                  </div>
+                  <div class="chip-bar mb-3">
+                    <button type="button" class="chip-btn prompt-chip" data-target-input="chatUserInput" data-text="我要一个能让小朋友学数学的AI故事应用">儿童教育</button>
+                    <button type="button" class="chip-btn prompt-chip" data-target-input="chatUserInput" data-text="我要一个让孩子安全学习编程的互动平台">编程启蒙</button>
+                    <button type="button" class="chip-btn prompt-chip" data-target-input="chatUserInput" data-text="我要一个亲子共创短视频的AI产品">亲子创作</button>
+                  </div>
+                  <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary btn-lg-touch">发送对话</button>
+                    <button type="button" id="btnToImagePrompt" class="btn btn-outline-primary btn-lg-touch">改写为图片提示词</button>
+                    <button type="button" id="btnToVideoPrompt" class="btn btn-outline-primary btn-lg-touch">改写为视频提示词</button>
+                    <button type="button" id="btnToMusicPrompt" class="btn btn-outline-primary btn-lg-touch">改写为音乐提示词</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+            <div class="card fun-card h-100">
+              <div class="card-body d-flex flex-column">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <h5 class="card-title mb-0">对话流</h5>
+                  <button id="toggleChatSettings" type="button" class="btn btn-sm btn-outline-secondary">会话设定</button>
+                </div>
+                <div id="chatMessages" class="chat-messages mb-3"
+                  aria-live="polite"></div>
+                <form id="chatQuickForm" class="chat-composer">
+                  <div class="input-group">
+                    <input id="chatQuickInput" type="text" class="form-control" placeholder="输入你的问题，回车即可发送"
+                      aria-label="对话输入框">
+                    <button class="btn btn-primary btn-lg-touch" type="submit">发送</button>
+                  </div>
+                  <div class="small text-secondary mt-2">提示：一问一答，适合现场即兴演示。</div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 文生图页 -->
+    <section id="imageSection" class="page-section">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card fun-card h-100">
+            <div class="card-body">
+              <h5 class="card-title">生成配置</h5>
+              <form id="imageForm" class="needs-validation" novalidate>
+                <div class="mb-3">
+                  <label for="imagePrompt" class="form-label">图片提示词</label>
+                  <textarea id="imagePrompt" class="form-control" rows="4" required
+                    aria-label="图片提示词"></textarea>
+                  <div class="invalid-feedback">请输入图片描述。</div>
+                </div>
+                <div class="mb-3">
+                  <label for="imageStyle" class="form-label">风格</label>
+                  <select id="imageStyle" class="form-select form-select-sm">
+                    <option value="photorealistic">写实</option>
+                    <option value="illustration">插画</option>
+                    <option value="cyberpunk">赛博朋克</option>
+                    <option value="minimal">极简</option>
+                  </select>
+                </div>
+                <div class="mb-3">
+                  <label for="imageRatio" class="form-label">比例</label>
+                  <select id="imageRatio" class="form-select form-select-sm">
+                    <option value="1:1">1:1</option>
+                    <option value="16:9">16:9</option>
+                    <option value="9:16">9:16</option>
+                  </select>
+                </div>
+                <div class="d-grid">
+                  <button type="submit" class="btn btn-success btn-lg-touch">生成图片</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="card fun-card">
+            <div class="card-body">
+              <h5 class="card-title mb-3">生成结果</h5>
+              <div id="imageResults" class="row g-3" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 文生视频页 -->
+    <section id="videoSection" class="page-section">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card fun-card h-100">
+            <div class="card-body">
+              <h5 class="card-title">视频任务</h5>
+              <form id="videoForm" class="needs-validation" novalidate>
+                <div class="mb-3">
+                  <label for="videoPrompt" class="form-label">视频提示词</label>
+                  <textarea id="videoPrompt" class="form-control" rows="4" required
+                    aria-label="视频提示词"></textarea>
+                  <div class="invalid-feedback">请输入视频描述。</div>
+                </div>
+                <div class="mb-3">
+                  <label for="videoDuration" class="form-label">时长（秒）</label>
+                  <input type="number" id="videoDuration" class="form-control form-control-sm"
+                    value="8" min="4" max="20">
+                </div>
+                <div class="d-grid">
+                  <button type="submit" class="btn btn-warning btn-lg-touch">创建视频任务</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="card fun-card">
+            <div class="card-body">
+              <h5 class="card-title mb-3">任务列表</h5>
+              <div id="videoJobs" class="row g-3" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 文生音乐页 -->
+    <section id="musicSection" class="page-section">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card fun-card h-100">
+            <div class="card-body">
+              <h5 class="card-title">音乐任务</h5>
+              <form id="musicForm" class="needs-validation" novalidate>
+                <div class="mb-3">
+                  <label for="musicPrompt" class="form-label">音乐提示词</label>
+                  <textarea id="musicPrompt" class="form-control" rows="4" required
+                    aria-label="音乐提示词"></textarea>
+                  <div class="invalid-feedback">请输入音乐描述。</div>
+                </div>
+                <div class="d-grid">
+                  <button type="submit" class="btn btn-info btn-lg-touch">创建音乐任务</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="card fun-card">
+            <div class="card-body">
+              <h5 class="card-title mb-3">任务列表</h5>
+              <div id="musicJobs" class="row g-3" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast for errors -->
+  <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;">
+    <div id="errorToast" class="toast align-items-center text-bg-danger border-0" role="alert" aria-live="assertive"
+      aria-atomic="true">
+      <div class="d-flex">
+        <div class="toast-body" id="errorToastBody">
+          出错了
+        </div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"
+          aria-label="关闭"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+    crossorigin="anonymous"></script>
+  <script src="main.js"></script>
+</body>
+
+</html>
+

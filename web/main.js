@@ -1,0 +1,553 @@
+(() => {
+  const sectionButtons = document.querySelectorAll('nav .nav-link');
+  const sections = document.querySelectorAll('.page-section');
+  const errorToastEl = document.getElementById('errorToast');
+  const errorToastBody = document.getElementById('errorToastBody');
+  const errorToast = errorToastEl ? new bootstrap.Toast(errorToastEl) : null;
+
+  function showError(message) {
+    if (!errorToast) {
+      alert(message);
+      return;
+    }
+    errorToastBody.textContent = message;
+    errorToast.show();
+  }
+
+  // 页面切换
+  sectionButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      sectionButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const target = btn.getAttribute('data-target');
+      sections.forEach(sec => {
+        sec.classList.toggle('active', sec.id === target);
+      });
+    });
+  });
+
+  // 快捷提示词芯片
+  document.querySelectorAll('.prompt-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const targetInputId = chip.getAttribute('data-target-input');
+      const text = chip.getAttribute('data-text') || '';
+      const input = document.getElementById(targetInputId);
+      if (input) {
+        input.value = text;
+        input.focus();
+      }
+    });
+  });
+
+  // 简单表单校验辅助
+  function attachValidation(form) {
+    if (!form) return;
+    form.addEventListener('submit', evt => {
+      if (!form.checkValidity()) {
+        evt.preventDefault();
+        evt.stopPropagation();
+      }
+      form.classList.add('was-validated');
+    }, false);
+  }
+
+  document.querySelectorAll('form.needs-validation').forEach(attachValidation);
+
+  // API 封装
+  async function apiPost(path, body) {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `请求失败: ${res.status}`);
+    }
+    return data;
+  }
+
+  async function apiGet(path) {
+    const res = await fetch(path);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || `请求失败: ${res.status}`);
+    }
+    return data;
+  }
+
+  // ===== 总览统计 =====
+  async function refreshStats() {
+    try {
+      const stats = await apiGet('/api/stats');
+      const totalEl = document.getElementById('statTotalJobs');
+      const completedEl = document.getElementById('statCompletedJobs');
+      if (totalEl) totalEl.textContent = stats.totalJobs ?? 0;
+      if (completedEl) completedEl.textContent = stats.completedJobs ?? 0;
+    } catch (err) {
+      console.warn('刷新统计失败', err);
+    }
+  }
+
+  setInterval(refreshStats, 5000);
+  refreshStats();
+
+  // ===== AI 对话 =====
+  const chatForm = document.getElementById('chatForm');
+  const chatMessages = document.getElementById('chatMessages');
+  const chatSystemPrompt = document.getElementById('chatSystemPrompt');
+  const chatUserInput = document.getElementById('chatUserInput');
+  const chatQuickForm = document.getElementById('chatQuickForm');
+  const chatQuickInput = document.getElementById('chatQuickInput');
+  const chatSettingsPanel = document.getElementById('chatSettingsPanel');
+  const toggleChatSettingsBtn = document.getElementById('toggleChatSettings');
+
+  let chatHistory = [];
+
+  function appendChatMessage(role, content) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'mb-2 d-flex ' + (role === 'user' ? 'justify-content-end' : 'justify-content-start');
+
+    const bubble = document.createElement('div');
+    bubble.className = 'p-2 px-3 small ' + (role === 'user' ? 'chat-message-user' : 'chat-message-ai');
+    bubble.textContent = content;
+
+    wrapper.appendChild(bubble);
+    chatMessages.appendChild(wrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  async function sendChatMessage(userText) {
+    const text = (userText || '').trim();
+    if (!text) return;
+    const systemText = chatSystemPrompt.value.trim();
+
+    chatHistory.push({ role: 'user', content: text });
+    appendChatMessage('user', text);
+
+    try {
+      const payloadMessages = [];
+      if (systemText) {
+        payloadMessages.push({ role: 'system', content: systemText });
+      }
+      payloadMessages.push(...chatHistory.map(m => ({
+        role: m.role,
+        content: m.content
+      })));
+
+      const resp = await apiPost('/api/chat/generate', {
+        messages: payloadMessages
+      });
+
+      const output = resp?.data?.output?.[0]?.content?.[0]?.text
+        || resp?.data?.choices?.[0]?.message?.content
+        || '[无响应内容]';
+
+      chatHistory.push({ role: 'assistant', content: output });
+      appendChatMessage('assistant', output);
+    } catch (err) {
+      console.error(err);
+      showError((err.message || '对话生成失败').replace('OpenRouter 调用失败: ', ''));
+    }
+  }
+
+  if (chatForm) {
+    chatForm.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      if (!chatForm.checkValidity()) {
+        chatForm.classList.add('was-validated');
+        return;
+      }
+      await sendChatMessage(chatUserInput.value);
+      chatUserInput.value = '';
+    });
+  }
+
+  if (chatQuickForm) {
+    chatQuickForm.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      await sendChatMessage(chatQuickInput.value);
+      chatQuickInput.value = '';
+      chatQuickInput.focus();
+    });
+  }
+
+  if (toggleChatSettingsBtn && chatSettingsPanel) {
+    toggleChatSettingsBtn.addEventListener('click', () => {
+      chatSettingsPanel.classList.toggle('d-none');
+      const isHidden = chatSettingsPanel.classList.contains('d-none');
+      toggleChatSettingsBtn.textContent = isHidden ? '会话设定' : '收起设定';
+    });
+  }
+
+  // 将对话内容改写为各类提示词（这里简单复用最近一轮用户输入）
+  function getLastUserText() {
+    const last = [...chatHistory].reverse().find(m => m.role === 'user');
+    return last?.content || chatUserInput.value.trim();
+  }
+
+  const imagePromptInput = document.getElementById('imagePrompt');
+  const videoPromptInput = document.getElementById('videoPrompt');
+  const musicPromptInput = document.getElementById('musicPrompt');
+
+  const btnToImagePrompt = document.getElementById('btnToImagePrompt');
+  const btnToVideoPrompt = document.getElementById('btnToVideoPrompt');
+  const btnToMusicPrompt = document.getElementById('btnToMusicPrompt');
+
+  if (btnToImagePrompt) {
+    btnToImagePrompt.addEventListener('click', () => {
+      const base = getLastUserText();
+      if (!base) return showError('请先在对话里描述一个场景。');
+      if (imagePromptInput) {
+        imagePromptInput.value = `根据下面的场景生成一张适合投资人演示的视觉图：${base}`;
+      }
+    });
+  }
+
+  if (btnToVideoPrompt) {
+    btnToVideoPrompt.addEventListener('click', () => {
+      const base = getLastUserText();
+      if (!base) return showError('请先在对话里描述一个场景。');
+      if (videoPromptInput) {
+        videoPromptInput.value = `根据下面的场景生成一个 5-10 秒的产品 Demo 视频：${base}`;
+      }
+    });
+  }
+
+  if (btnToMusicPrompt) {
+    btnToMusicPrompt.addEventListener('click', () => {
+      const base = getLastUserText();
+      if (!base) return showError('请先在对话里描述一个场景。');
+      if (musicPromptInput) {
+        musicPromptInput.value = `根据下面的场景生成一段适合作为背景音乐的旋律：${base}`;
+      }
+    });
+  }
+
+  // ===== 文生图 =====
+  const imageForm = document.getElementById('imageForm');
+  const imageResults = document.getElementById('imageResults');
+  const imageStyle = document.getElementById('imageStyle');
+  const imageRatio = document.getElementById('imageRatio');
+
+  function renderImageJobCard(job) {
+    const col = document.createElement('div');
+    col.className = 'col-12 col-md-6 col-lg-4';
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+
+    const cover = document.createElement('div');
+    const body = document.createElement('div');
+    body.className = 'card-body small text-secondary';
+
+    if (job.status === 'completed') {
+      if (job.imageUrl) {
+        cover.className = 'ratio ratio-1x1';
+        const img = document.createElement('img');
+        img.src = job.imageUrl;
+        img.alt = 'AI 生成图片';
+        img.className = 'w-100 h-100 object-fit-cover';
+        cover.appendChild(img);
+      } else {
+        cover.className = 'ratio ratio-1x1 placeholder-art d-flex align-items-center justify-content-center text-center px-3';
+        cover.textContent = '演示兜底模式已返回结果';
+      }
+      const usedModel = job.usedModel ? ` | 模型：${job.usedModel}` : '';
+      body.textContent = `${job.prompt}${usedModel}`;
+    } else if (job.status === 'failed') {
+      cover.className = 'ratio ratio-1x1 placeholder-art d-flex align-items-center justify-content-center text-center px-3';
+      cover.textContent = '生成失败';
+      body.textContent = `任务失败：${job.error || '未知错误'}`;
+    } else {
+      cover.className = 'ratio ratio-1x1 placeholder-art d-flex align-items-center justify-content-center text-center px-3';
+      cover.textContent = '正在生成图片...';
+      body.textContent = job.prompt;
+    }
+
+    card.appendChild(cover);
+    card.appendChild(body);
+    col.appendChild(card);
+    return col;
+  }
+
+  if (imageForm) {
+    imageForm.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      if (!imageForm.checkValidity()) {
+        imageForm.classList.add('was-validated');
+        return;
+      }
+
+      const prompt = imagePromptInput.value.trim();
+      try {
+        const resp = await apiPost('/api/image/generate', {
+          prompt,
+          style: imageStyle.value === 'illustration' ? '<flat illustration>' : '<auto>',
+          size: imageRatio.value === '16:9' ? '1280*720' : imageRatio.value === '9:16' ? '720*1280' : '1024*1024'
+        });
+
+        const jobId = resp.jobId;
+        const job = { id: jobId, type: 'image', status: 'queued', prompt };
+        const card = renderImageJobCard(job);
+        card.classList.add(`placeholder-${jobId}`);
+        imageResults.prepend(card);
+        pollJob(jobId, 'image');
+        refreshStats();
+      } catch (err) {
+        console.error(err);
+        showError((err.message || '图片生成失败').replace('OpenRouter 调用失败: ', ''));
+      }
+    });
+  }
+
+  // ===== 文生视频（异步任务）=====
+  const videoForm = document.getElementById('videoForm');
+  const videoJobs = document.getElementById('videoJobs');
+
+  const activeJobPollers = new Map();
+
+  function renderVideoJobCard(job) {
+    const col = document.createElement('div');
+    col.className = 'col-12 col-md-6';
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+
+    const body = document.createElement('div');
+    body.className = 'card-body small';
+
+    const title = document.createElement('h6');
+    title.className = 'card-title';
+    title.textContent = `任务 #${job.id.slice(0, 6)}`;
+
+    const status = document.createElement('span');
+    status.className = 'badge ms-2 ' + (job.status === 'completed' ? 'bg-success' : 'bg-secondary');
+    status.textContent = job.status === 'completed' ? '已完成' : job.status === 'queued' ? '排队中' : '进行中';
+
+    const desc = document.createElement('p');
+    desc.className = 'mt-2 mb-2 text-secondary';
+    desc.textContent = job.prompt;
+
+    body.appendChild(title);
+    body.appendChild(status);
+    body.appendChild(desc);
+
+    if (job.warning) {
+      const warn = document.createElement('div');
+      warn.className = 'small mt-2';
+      warn.textContent = job.warning;
+      body.appendChild(warn);
+    }
+
+    if (job.status === 'completed' && job.assetId) {
+      const video = document.createElement('video');
+      video.className = 'w-100 rounded';
+      video.controls = true;
+      video.src = job.mediaUrl || job.mockUrl || '#';
+      video.innerText = '您的浏览器不支持 video 标签';
+      body.appendChild(video);
+    } else {
+      const progress = document.createElement('div');
+      progress.className = 'progress';
+      const bar = document.createElement('div');
+      bar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+      bar.style.width = '60%';
+      bar.textContent = '生成中（约1-2分钟）…';
+      progress.appendChild(bar);
+      body.appendChild(progress);
+    }
+
+    if (job.status === 'completed' && (job.provider || job.usedModel)) {
+      const info = document.createElement('div');
+      info.className = 'small text-secondary mt-2';
+      const providerText = job.provider ? `供应商：${job.provider}` : '';
+      const modelText = job.usedModel ? `模型：${job.usedModel}` : '';
+      info.textContent = [providerText, modelText].filter(Boolean).join(' · ');
+      body.appendChild(info);
+    }
+
+    card.appendChild(body);
+    col.appendChild(card);
+    return col;
+  }
+
+  async function pollJob(jobId, type) {
+    if (activeJobPollers.has(jobId)) return;
+    const timer = setInterval(async () => {
+      try {
+        const job = await apiGet(`/api/jobs/${jobId}`);
+        if (job.status === 'completed') {
+          clearInterval(timer);
+          activeJobPollers.delete(jobId);
+          if (type === 'image') {
+            const asset = await apiGet(`/api/assets/${job.assetId}`);
+            job.imageUrl = asset.imageUrl;
+            job.usedModel = job.usedModel || asset.usedModel;
+            const card = renderImageJobCard(job);
+            imageResults.querySelectorAll(`.placeholder-${jobId}`).forEach(el => el.remove());
+            imageResults.prepend(card);
+            refreshStats();
+          } else if (type === 'video') {
+            const asset = await apiGet(`/api/assets/${job.assetId}`);
+            job.mediaUrl = asset.mediaUrl || asset.mockUrl;
+            job.provider = asset.provider || job.provider;
+            job.usedModel = asset.usedModel || job.usedModel;
+            job.warning = asset.warning || job.warning;
+            const card = renderVideoJobCard(job);
+            videoJobs.querySelectorAll('.placeholder-job').forEach(el => el.remove());
+            videoJobs.prepend(card);
+            refreshStats();
+          } else if (type === 'music') {
+            const asset = await apiGet(`/api/assets/${job.assetId}`);
+            job.mediaUrl = asset.mediaUrl || asset.mockUrl;
+            job.provider = asset.provider || job.provider;
+            job.usedModel = asset.usedModel || job.usedModel;
+            job.warning = asset.warning || job.warning;
+            const card = renderMusicJobCard(job);
+            musicJobs.querySelectorAll('.placeholder-job').forEach(el => el.remove());
+            musicJobs.prepend(card);
+            refreshStats();
+          }
+        } else if (job.status === 'failed') {
+          clearInterval(timer);
+          activeJobPollers.delete(jobId);
+          if (type === 'image') {
+            const card = renderImageJobCard(job);
+            imageResults.querySelectorAll(`.placeholder-${jobId}`).forEach(el => el.remove());
+            imageResults.prepend(card);
+          } else if (type === 'video') {
+            showError(job.error || '视频任务失败');
+          } else if (type === 'music') {
+            showError(job.error || '音乐任务失败');
+          }
+        }
+      } catch (err) {
+        console.warn('轮询任务失败', err);
+      }
+    }, 2000);
+    activeJobPollers.set(jobId, timer);
+  }
+
+  if (videoForm) {
+    videoForm.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      if (!videoForm.checkValidity()) {
+        videoForm.classList.add('was-validated');
+        return;
+      }
+
+      const prompt = videoPromptInput.value.trim();
+      const durationVal = Number(document.getElementById('videoDuration')?.value || 5);
+      const duration = Number.isFinite(durationVal) ? durationVal : 5;
+      try {
+        const resp = await apiPost('/api/video/generate', { prompt, duration });
+        const jobId = resp.jobId;
+        const job = { id: jobId, status: 'queued', prompt, duration, type: 'video' };
+        const card = renderVideoJobCard(job);
+        card.classList.add('placeholder-job');
+        videoJobs.prepend(card);
+        pollJob(jobId, 'video');
+        refreshStats();
+      } catch (err) {
+        console.error(err);
+        showError(err.message || '视频任务创建失败');
+      }
+    });
+  }
+
+  // ===== 文生音乐（异步任务）=====
+  const musicForm = document.getElementById('musicForm');
+  const musicJobs = document.getElementById('musicJobs');
+
+  function renderMusicJobCard(job) {
+    const col = document.createElement('div');
+    col.className = 'col-12 col-md-6';
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+
+    const body = document.createElement('div');
+    body.className = 'card-body small';
+
+    const title = document.createElement('h6');
+    title.className = 'card-title';
+    title.textContent = `任务 #${job.id.slice(0, 6)}`;
+
+    const status = document.createElement('span');
+    status.className = 'badge ms-2 ' + (job.status === 'completed' ? 'bg-success' : 'bg-secondary');
+    status.textContent = job.status === 'completed' ? '已完成' : job.status === 'queued' ? '排队中' : '进行中';
+
+    const desc = document.createElement('p');
+    desc.className = 'mt-2 mb-2 text-secondary';
+    desc.textContent = job.prompt;
+
+    body.appendChild(title);
+    body.appendChild(status);
+    body.appendChild(desc);
+
+    if (job.status === 'completed' && job.assetId) {
+      const audio = document.createElement('audio');
+      audio.className = 'w-100';
+      audio.controls = true;
+      audio.src = job.mediaUrl || job.mockUrl || '#';
+      audio.innerText = '您的浏览器不支持 audio 标签';
+      body.appendChild(audio);
+
+      if (job.provider || job.usedModel) {
+        const info = document.createElement('div');
+        info.className = 'small text-secondary mt-2';
+        const providerText = job.provider ? `供应商：${job.provider}` : '';
+        const modelText = job.usedModel ? `模型：${job.usedModel}` : '';
+        info.textContent = [providerText, modelText].filter(Boolean).join(' · ');
+        body.appendChild(info);
+      }
+    } else {
+      const progress = document.createElement('div');
+      progress.className = 'progress';
+      const bar = document.createElement('div');
+      bar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-info';
+      bar.style.width = '60%';
+      bar.textContent = '生成中（约1-2分钟）…';
+      progress.appendChild(bar);
+      body.appendChild(progress);
+    }
+
+    if (job.warning) {
+      const warn = document.createElement('div');
+      warn.className = 'small mt-2 text-danger';
+      warn.textContent = job.warning;
+      body.appendChild(warn);
+    }
+
+    card.appendChild(body);
+    col.appendChild(card);
+    return col;
+  }
+
+  if (musicForm) {
+    musicForm.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      if (!musicForm.checkValidity()) {
+        musicForm.classList.add('was-validated');
+        return;
+      }
+
+      const prompt = musicPromptInput.value.trim();
+      try {
+        const resp = await apiPost('/api/music/generate', { prompt });
+        const jobId = resp.jobId;
+        const job = { id: jobId, status: 'queued', prompt, type: 'music' };
+        const card = renderMusicJobCard(job);
+        card.classList.add('placeholder-job');
+        musicJobs.prepend(card);
+        pollJob(jobId, 'music');
+        refreshStats();
+      } catch (err) {
+        console.error(err);
+        showError(err.message || '音乐任务创建失败');
+      }
+    });
+  }
+})();
+
