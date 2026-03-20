@@ -1,7 +1,7 @@
 /**
- * Vercel Serverless 入口：把 /api/* 转发给 Express（与本地 node server/index.js 同一路由）
+ * Vercel Serverless：直接导出 Express app（勿用 serverless-http，其默认 AWS 适配在 Vercel 上会挂起直至 504）
+ * @see https://vercel.com/docs/frameworks/backend/express
  */
-import serverless from 'serverless-http';
 import app from '../server/index.js';
 
-export default serverless(app);
+export default app;

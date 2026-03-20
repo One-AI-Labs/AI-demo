@@ -16,7 +16,10 @@ const PORT = process.env.PORT || 3000;
 const DEMO_SAFE_MODE = String(process.env.DEMO_SAFE_MODE || 'true').toLowerCase() === 'true';
 
 app.use(express.json({ limit: '2mb' }));
-app.use(morgan('dev'));
+// Vercel 上 morgan 写 stdout 可能带来额外开销；本地保留详细日志
+if (!process.env.VERCEL) {
+  app.use(morgan('dev'));
+}
 
 // 简单内存任务与资源存储（Demo 用，生产请换成 Redis/DB + 对象存储）
 const jobs = new Map();
