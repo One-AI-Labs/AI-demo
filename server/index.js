@@ -7,6 +7,8 @@ import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import fetch from 'node-fetch';
+import crypto from 'crypto';
+import { spawn } from 'child_process';
 
 dotenv.config();
 
@@ -16,6 +18,77 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DEMO_SAFE_MODE = String(process.env.DEMO_SAFE_MODE || 'true').toLowerCase() === 'true';
+const repoRoot = path.join(__dirname, '..');
+
+/**
+ * GitHub Webhook：push 到 main 后由 GitHub 回调本地址，服务器本地执行 deploy-vps.sh（无需公网 SSH 入站）。
+ * 在仓库 Settings → Webhooks 添加 Payload URL: https://你的域名/api/deploy/hook
+ * Content type: application/json；Secret 与 DEPLOY_WEBHOOK_SECRET 一致；仅勾选 push events。
+ */
+function verifyGitHubWebhookSignature(req, res, next) {
+  const secret = process.env.DEPLOY_WEBHOOK_SECRET;
+  if (!secret) {
+    return res.status(503).json({ error: 'DEPLOY_WEBHOOK_SECRET 未配置' });
+  }
+  const sigHeader = req.headers['x-hub-signature-256'];
+  if (!sigHeader || typeof sigHeader !== 'string') {
+    return res.status(401).json({ error: '缺少 X-Hub-Signature-256' });
+  }
+  const body = req.body;
+  if (!Buffer.isBuffer(body)) {
+    return res.status(400).json({ error: '无效请求体' });
+  }
+  const hmac = crypto.createHmac('sha256', secret);
+  const expected = Buffer.from(`sha256=${hmac.update(body).digest('hex')}`, 'utf8');
+  const received = Buffer.from(sigHeader, 'utf8');
+  if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) {
+    return res.status(401).json({ error: '签名校验失败' });
+  }
+  next();
+}
+
+app.post(
+  '/api/deploy/hook',
+  express.raw({ type: 'application/json' }),
+  verifyGitHubWebhookSignature,
+  (req, res) => {
+    if (process.env.VERCEL) {
+      return res.status(501).json({ error: 'Webhook 部署仅在自托管 Node 环境可用' });
+    }
+    let payload;
+    try {
+      payload = JSON.parse(req.body.toString('utf8'));
+    } catch {
+      return res.status(400).json({ error: 'JSON 解析失败' });
+    }
+
+    const repoFull = process.env.DEPLOY_REPO_FULL_NAME;
+    if (repoFull && payload.repository?.full_name && payload.repository.full_name !== repoFull) {
+      return res.status(200).json({ ignored: true, reason: 'repository mismatch' });
+    }
+
+    if (payload.ref !== 'refs/heads/main') {
+      return res.status(200).json({ ignored: true, reason: 'not main branch' });
+    }
+
+    const scriptPath = path.join(repoRoot, 'scripts', 'deploy-vps.sh');
+    res.status(202).json({ accepted: true, branch: 'main' });
+
+    const child = spawn('bash', [scriptPath], {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    const log = (prefix, chunk) => {
+      const s = chunk.toString().trim();
+      if (s) console.log(`[deploy-webhook] ${prefix}`, s);
+    };
+    child.stdout.on('data', (d) => log('stdout', d));
+    child.stderr.on('data', (d) => log('stderr', d));
+    child.on('error', (err) => console.error('[deploy-webhook] spawn error', err));
+    child.on('close', (code) => console.log('[deploy-webhook] bash exit', code));
+  }
+);
 
 // GitHub Webhook：须在 express.json 之前，使用原始 body 验签（X-Hub-Signature-256）
 app.post(
@@ -460,14 +533,14 @@ function buildMockChatResponse(messages) {
   };
 }
 
-function buildMockImageResponse(prompt) {
+function buildMockImageResponse() {
   return {
     output: [
       {
         content: [
           {
             type: 'output_text',
-            text: `演示模式：已接收图片提示词 -> ${prompt}`
+            text: '演示模式：未调用真实绘图服务，仅返回占位结果（提示词仅保存在任务记录中）。'
           }
         ]
       }
@@ -562,7 +635,7 @@ app.post('/api/image/generate', async (req, res) => {
     } catch (err) {
       console.error(err);
       if (DEMO_SAFE_MODE) {
-        const mockData = buildMockImageResponse(prompt);
+        const mockData = buildMockImageResponse();
         const assetId = uuidv4();
         assets.set(assetId, {
           type: 'image',
