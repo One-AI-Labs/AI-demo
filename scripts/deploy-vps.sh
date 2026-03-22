@@ -2,7 +2,7 @@
 # 在云服务器项目根目录执行：bash scripts/deploy-vps.sh
 # 要求：已配置 origin、Node/npm、pm2 应用名 ai-demo
 set -euo pipefail
-
+# test
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
