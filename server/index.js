@@ -2,6 +2,8 @@ import express from 'express';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 import path from 'path';
+import crypto from 'crypto';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import fetch from 'node-fetch';
@@ -14,6 +16,73 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DEMO_SAFE_MODE = String(process.env.DEMO_SAFE_MODE || 'true').toLowerCase() === 'true';
+
+// GitHub Webhook：须在 express.json 之前，使用原始 body 验签（X-Hub-Signature-256）
+app.post(
+  '/api/deploy/hook',
+  express.raw({ type: 'application/json', limit: '1mb' }),
+  (req, res) => {
+    const secret = process.env.DEPLOY_WEBHOOK_SECRET;
+    if (!secret) {
+      return res.status(503).json({ error: 'webhook 未配置 DEPLOY_WEBHOOK_SECRET' });
+    }
+
+    const sigHeader = req.headers['x-hub-signature-256'];
+    if (!sigHeader || typeof sigHeader !== 'string' || !sigHeader.startsWith('sha256=')) {
+      return res.status(401).json({ error: 'missing signature' });
+    }
+
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''), 'utf8');
+    const hmac = crypto.createHmac('sha256', secret);
+    hmac.update(raw);
+    const expected = Buffer.from(`sha256=${hmac.digest('hex')}`, 'utf8');
+    const received = Buffer.from(sigHeader, 'utf8');
+    if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+      return res.status(401).json({ error: 'bad signature' });
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return res.status(400).json({ error: 'invalid json' });
+    }
+
+    const expectedRepo = process.env.DEPLOY_REPO_FULL_NAME;
+    if (expectedRepo) {
+      const fullName = payload?.repository?.full_name;
+      if (fullName && fullName !== expectedRepo) {
+        return res.status(403).json({ error: 'repository mismatch' });
+      }
+    }
+
+    const event = req.headers['x-github-event'] || '';
+    if (event === 'ping') {
+      return res.status(200).json({ ok: true, message: 'pong' });
+    }
+
+    if (event !== 'push') {
+      return res.status(200).json({ skipped: true, reason: 'ignored event', event });
+    }
+
+    const ref = payload?.ref;
+    if (ref && ref !== 'refs/heads/main') {
+      return res.status(200).json({ skipped: true, reason: 'not main branch', ref });
+    }
+
+    const root = path.join(__dirname, '..');
+    const script = path.join(root, 'scripts', 'deploy-vps.sh');
+    const child = spawn('bash', [script], {
+      cwd: root,
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env }
+    });
+    child.unref();
+
+    return res.status(202).json({ ok: true, message: 'deploy started' });
+  }
+);
 
 app.use(express.json({ limit: '2mb' }));
 // Vercel 上 morgan 写 stdout 可能带来额外开销；本地保留详细日志
