@@ -13,6 +13,20 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Check Actions secrets (fail fast if missing)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          ok=0
+          [ -z "$DEPLOY_HOST" ] && echo "::error::DEPLOY_HOST 未设置：请到仓库 Settings → Secrets and variables → Actions 添加（服务器 IP 或域名）" && ok=1
+          [ -z "$DEPLOY_USER" ] && echo "::error::DEPLOY_USER 未设置" && ok=1
+          [ -z "$DEPLOY_SSH_KEY" ] && echo "::error::DEPLOY_SSH_KEY 未设置" && ok=1
+          [ -z "$DEPLOY_PATH" ] && echo "::error::DEPLOY_PATH 未设置（例如 /var/www/ai-demo）" && ok=1
+          exit $ok
+
       - name: SSH deploy
         uses: appleboy/ssh-action@v1.2.0
         with:
