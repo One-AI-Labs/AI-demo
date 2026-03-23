@@ -475,6 +475,39 @@ function buildMockImageResponse() {
   };
 }
 
+function buildMockGameHtml() {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>演示模式小游戏</title>
+<style>body{font-family:sans-serif;text-align:center;padding:2rem;background:linear-gradient(135deg,#6a7dff,#5ed9c8);color:#fff;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center}
+h1{font-size:1.5rem;margin-bottom:1rem}
+.btn{font-size:1.2rem;padding:1rem 2rem;border:0;border-radius:12px;background:#fff;color:#3a4fb8;cursor:pointer;font-weight:600;transition:transform .2s}
+.btn:hover{transform:scale(1.05)}
+#count{font-size:3rem;margin:1.5rem 0;font-weight:800}</style>
+</head>
+<body>
+<h1>点击计数小游戏（演示兜底）</h1>
+<div id="count">0</div>
+<button class="btn" onclick="document.getElementById('count').textContent=+document.getElementById('count').textContent+1">点我+1</button>
+</body>
+</html>`;
+}
+
+function extractHtmlFromLLMResponse(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  // 尝试提取 ```html 或 ``` 代码块
+  const codeBlockMatch = trimmed.match(/```(?:html)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    return codeBlockMatch[1].trim();
+  }
+  // 纯 HTML 文本（以 doctype 或 html 开头）
+  if (/^\s*<!DOCTYPE\s/i.test(trimmed) || /^\s*<html\s/i.test(trimmed) || trimmed.startsWith('<html>')) {
+    return trimmed;
+  }
+  return trimmed;
+}
+
 // AI 对话
 app.post('/api/chat/generate', async (req, res) => {
   try {
@@ -774,6 +807,115 @@ app.post('/api/music/generate', async (req, res) => {
         jobs.set(jobId, { ...jobs.get(jobId), status: 'completed', assetId, usedModel: 'demo/mock-music' });
       } else {
         jobs.set(jobId, { ...jobs.get(jobId), status: 'failed', error: err.message || '音乐生成失败' });
+      }
+    }
+  })();
+
+  res.json({ jobId });
+});
+
+// 文生小游戏（异步任务：LLM 生成 HTML 单文件小游戏）
+// 优先使用 DashScope（国内可用），OpenRouter 作为备选（需 VPN）
+const GAME_SYSTEM_PROMPT = `你是一个 HTML5 小游戏生成专家。根据用户的自然语言描述，生成一个完整、可独立运行的 HTML 单文件小游戏。
+
+要求：
+1. 输出必须是完整的 HTML 文档，包含 <!DOCTYPE html>、<head>、<body>、内嵌 <style> 和 <script>
+2. 不要使用 markdown 代码块包裹，直接输出纯 HTML 文本
+3. 游戏需在单文件内完成，不依赖外部 CDN（可使用内联样式和脚本）
+4. 确保游戏可玩、有明确的交互反馈
+5. 适配移动端和平板触控，响应式布局`;
+const gameModels = parseModelList(process.env.OPENROUTER_CHAT_MODELS, ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']);
+
+app.post('/api/game/generate', (req, res) => {
+  const { prompt } = req.body || {};
+  if (!prompt) {
+    return res.status(400).json({ error: 'prompt 不能为空' });
+  }
+
+  const jobId = uuidv4();
+  jobs.set(jobId, {
+    id: jobId,
+    type: 'game',
+    status: 'queued',
+    prompt,
+    provider: 'dashscope'
+  });
+
+  (async () => {
+    try {
+      jobs.set(jobId, { ...jobs.get(jobId), status: 'running' });
+
+      const fullPrompt = GAME_SYSTEM_PROMPT + '\n\n请根据以下描述生成一个可运行的 HTML5 小游戏：\n\n' + prompt;
+      let rawText = '';
+      let usedModel = 'dashscope-app';
+
+      // 1. 优先 DashScope（国内直连可用）
+      try {
+        const dashResp = await callDashscopeApp({ prompt: fullPrompt });
+        rawText = dashResp?.output?.text || dashResp?.output?.[0]?.text || '';
+        usedModel = dashResp?.usage?.models?.[0]?.model_id || 'dashscope-app';
+      } catch (dashErr) {
+        console.warn('DashScope 游戏生成失败，尝试 OpenRouter:', dashErr.message);
+        // 2. 备选 OpenRouter（需 VPN/非大陆网络）
+        const input = [
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: fullPrompt }] }
+        ];
+        const { data } = await callOpenRouterWithFallback({
+          models: gameModels,
+          input,
+          extra: { max_output_tokens: 16000 }
+        });
+        rawText = data?.output?.[0]?.content?.[0]?.text || data?.choices?.[0]?.message?.content || '';
+        usedModel = data?.model || 'openrouter';
+      }
+
+      const html = extractHtmlFromLLMResponse(rawText);
+
+      if (!html || html.length < 100) {
+        throw new Error('LLM 未返回有效的 HTML 内容');
+      }
+
+      const assetId = uuidv4();
+      assets.set(assetId, {
+        type: 'game',
+        html,
+        provider: usedModel.includes('dashscope') ? 'dashscope' : 'openrouter',
+        usedModel,
+        raw: { text: rawText }
+      });
+      jobs.set(jobId, {
+        ...jobs.get(jobId),
+        status: 'completed',
+        assetId,
+        usedModel
+      });
+    } catch (err) {
+      console.error('文生小游戏 OpenRouter 调用失败:', err.message, err);
+      const errMsg = err?.message || String(err);
+      if (DEMO_SAFE_MODE) {
+        const assetId = uuidv4();
+        const warning = errMsg ? `当前模型服务不可用，已自动切换到演示兜底模式。错误：${errMsg}` : '当前模型服务不可用，已自动切换到演示兜底模式';
+        assets.set(assetId, {
+          type: 'game',
+          html: buildMockGameHtml(),
+          provider: 'demo',
+          usedModel: 'demo/mock-game',
+          fallbackUsed: true,
+          warning
+        });
+        jobs.set(jobId, {
+          ...jobs.get(jobId),
+          status: 'completed',
+          assetId,
+          usedModel: 'demo/mock-game',
+          warning
+        });
+      } else {
+        jobs.set(jobId, {
+          ...jobs.get(jobId),
+          status: 'failed',
+          error: err.message || '小游戏生成失败'
+        });
       }
     }
   })();

@@ -244,6 +244,9 @@
           <li class="nav-item">
             <button class="nav-link btn btn-link text-decoration-none" data-target="musicSection">文生音乐</button>
           </li>
+          <li class="nav-item">
+            <button class="nav-link btn btn-link text-decoration-none" data-target="gameSection">文生小游戏</button>
+          </li>
         </ul>
       </div>
     </div>
@@ -334,6 +337,7 @@
                     <button type="button" id="btnToImagePrompt" class="btn btn-outline-primary btn-lg-touch">改写为图片提示词</button>
                     <button type="button" id="btnToVideoPrompt" class="btn btn-outline-primary btn-lg-touch">改写为视频提示词</button>
                     <button type="button" id="btnToMusicPrompt" class="btn btn-outline-primary btn-lg-touch">改写为音乐提示词</button>
+                    <button type="button" id="btnToGamePrompt" class="btn btn-outline-primary btn-lg-touch">改写为游戏提示词</button>
                   </div>
                 </form>
               </div>
@@ -473,6 +477,45 @@
             <div class="card-body">
               <h5 class="card-title mb-3">任务列表</h5>
               <div id="musicJobs" class="row g-3" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 文生小游戏页 -->
+    <section id="gameSection" class="page-section">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card fun-card h-100">
+            <div class="card-body">
+              <h5 class="card-title">游戏任务</h5>
+              <form id="gameForm" class="needs-validation" novalidate>
+                <div class="mb-3">
+                  <label for="gamePrompt" class="form-label">游戏描述</label>
+                  <textarea id="gamePrompt" class="form-control" rows="4" required
+                    aria-label="游戏描述" placeholder="描述你想要的小游戏，如：10以内加减法、单词消消乐、贪吃蛇..."></textarea>
+                  <div class="invalid-feedback">请输入游戏描述。</div>
+                </div>
+                <div class="chip-bar mb-3">
+                  <button type="button" class="chip-btn game-chip" data-target-input="gamePrompt" data-text="10以内加减法小游戏">数学加减法</button>
+                  <button type="button" class="chip-btn game-chip" data-target-input="gamePrompt" data-text="单词配对消消乐">单词消消乐</button>
+                  <button type="button" class="chip-btn game-chip" data-target-input="gamePrompt" data-text="贪吃蛇游戏">贪吃蛇</button>
+                  <button type="button" class="chip-btn game-chip" data-target-input="gamePrompt" data-text="打地鼠小游戏">打地鼠</button>
+                  <button type="button" class="chip-btn game-chip" data-target-input="gamePrompt" data-text="简单记忆翻牌配对游戏">记忆翻牌</button>
+                </div>
+                <div class="d-grid">
+                  <button type="submit" class="btn btn-secondary btn-lg-touch">创建游戏任务</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-8">
+          <div class="card fun-card">
+            <div class="card-body">
+              <h5 class="card-title mb-3">任务列表</h5>
+              <div id="gameJobs" class="row g-3" aria-live="polite"></div>
             </div>
           </div>
         </div>

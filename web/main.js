@@ -34,8 +34,8 @@
     });
   });
 
-  // 快捷提示词芯片
-  document.querySelectorAll('.prompt-chip').forEach(chip => {
+  // 快捷提示词芯片（含 prompt-chip、game-chip）
+  document.querySelectorAll('.prompt-chip, .game-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const targetInputId = chip.getAttribute('data-target-input');
       const text = chip.getAttribute('data-text') || '';
@@ -153,6 +153,10 @@
 
       chatHistory.push({ role: 'assistant', content: output });
       appendChatMessage('assistant', output);
+      // 后端演示兜底时返回 warning，避免用户误以为已是真实模型回复
+      if (resp.warning) {
+        showError(resp.warning);
+      }
     } catch (err) {
       console.error(err);
       showError((err.message || '对话生成失败').replace('OpenRouter 调用失败: ', ''));
@@ -197,10 +201,12 @@
   const imagePromptInput = document.getElementById('imagePrompt');
   const videoPromptInput = document.getElementById('videoPrompt');
   const musicPromptInput = document.getElementById('musicPrompt');
+  const gamePromptInput = document.getElementById('gamePrompt');
 
   const btnToImagePrompt = document.getElementById('btnToImagePrompt');
   const btnToVideoPrompt = document.getElementById('btnToVideoPrompt');
   const btnToMusicPrompt = document.getElementById('btnToMusicPrompt');
+  const btnToGamePrompt = document.getElementById('btnToGamePrompt');
 
   if (btnToImagePrompt) {
     btnToImagePrompt.addEventListener('click', () => {
@@ -228,6 +234,20 @@
       if (!base) return showError('请先在对话里描述一个场景。');
       if (musicPromptInput) {
         musicPromptInput.value = `根据下面的场景生成一段适合作为背景音乐的旋律：${base}`;
+      }
+    });
+  }
+
+  if (btnToGamePrompt) {
+    btnToGamePrompt.addEventListener('click', () => {
+      const base = getLastUserText();
+      if (!base) return showError('请先在对话里描述一个场景。');
+      if (gamePromptInput) {
+        gamePromptInput.value = `根据下面的场景生成一个可玩的小游戏：${base}`;
+        sectionButtons.forEach(b => b.classList.remove('active'));
+        const gameBtn = document.querySelector('[data-target="gameSection"]');
+        if (gameBtn) gameBtn.classList.add('active');
+        sections.forEach(sec => sec.classList.toggle('active', sec.id === 'gameSection'));
       }
     });
   }
@@ -416,6 +436,16 @@
             musicJobs.querySelectorAll('.placeholder-job').forEach(el => el.remove());
             musicJobs.prepend(card);
             refreshStats();
+          } else if (type === 'game') {
+            const asset = await apiGet(`/api/assets/${job.assetId}`);
+            job.html = asset.html;
+            job.provider = asset.provider || job.provider;
+            job.usedModel = asset.usedModel || job.usedModel;
+            job.warning = asset.warning || job.warning;
+            const card = renderGameJobCard(job);
+            gameJobs.querySelectorAll(`.placeholder-${jobId}`).forEach(el => el.remove());
+            gameJobs.prepend(card);
+            refreshStats();
           }
         } else if (job.status === 'failed') {
           clearInterval(timer);
@@ -428,6 +458,11 @@
             showError(job.error || '视频任务失败');
           } else if (type === 'music') {
             showError(job.error || '音乐任务失败');
+          } else if (type === 'game') {
+            const card = renderGameJobCard(job);
+            gameJobs.querySelectorAll(`.placeholder-${jobId}`).forEach(el => el.remove());
+            gameJobs.prepend(card);
+            showError(job.error || '游戏任务失败');
           }
         }
       } catch (err) {
@@ -554,6 +589,109 @@
       } catch (err) {
         console.error(err);
         showError(err.message || '音乐任务创建失败');
+      }
+    });
+  }
+
+  // ===== 文生小游戏 =====
+  const gameForm = document.getElementById('gameForm');
+  const gameJobs = document.getElementById('gameJobs');
+
+  function renderGameJobCard(job) {
+    const col = document.createElement('div');
+    col.className = 'col-12 col-md-6';
+
+    const card = document.createElement('div');
+    card.className = 'result-card';
+
+    const body = document.createElement('div');
+    body.className = 'card-body small';
+
+    const title = document.createElement('h6');
+    title.className = 'card-title';
+    title.textContent = `任务 #${job.id.slice(0, 6)}`;
+
+    const status = document.createElement('span');
+    status.className = 'badge ms-2 ' + (job.status === 'completed' ? 'bg-success' : 'bg-secondary');
+    status.textContent = job.status === 'completed' ? '已完成' : job.status === 'queued' ? '排队中' : '进行中';
+
+    const desc = document.createElement('p');
+    desc.className = 'mt-2 mb-2 text-secondary';
+    desc.textContent = job.prompt;
+
+    body.appendChild(title);
+    body.appendChild(status);
+    body.appendChild(desc);
+
+    if (job.warning) {
+      const warn = document.createElement('div');
+      warn.className = 'small mt-2 text-warning';
+      warn.textContent = job.warning;
+      body.appendChild(warn);
+    }
+
+    if (job.status === 'completed' && job.assetId && job.html) {
+      const iframeWrap = document.createElement('div');
+      iframeWrap.className = 'ratio ratio-16x9 rounded overflow-hidden bg-light mb-2';
+      const iframe = document.createElement('iframe');
+      iframe.sandbox = 'allow-scripts';
+      iframe.srcdoc = job.html;
+      iframe.title = '生成的小游戏预览';
+      iframe.className = 'w-100 h-100 border-0';
+      iframe.style.minHeight = '280px';
+      iframeWrap.appendChild(iframe);
+      body.appendChild(iframeWrap);
+    } else if (job.status === 'failed') {
+      const errEl = document.createElement('div');
+      errEl.className = 'small text-danger';
+      errEl.textContent = job.error || '生成失败';
+      body.appendChild(errEl);
+    } else {
+      const progress = document.createElement('div');
+      progress.className = 'progress';
+      const bar = document.createElement('div');
+      bar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-secondary';
+      bar.style.width = '60%';
+      bar.textContent = '生成中（约10-30秒）…';
+      progress.appendChild(bar);
+      body.appendChild(progress);
+    }
+
+    if (job.status === 'completed' && (job.provider || job.usedModel)) {
+      const info = document.createElement('div');
+      info.className = 'small text-secondary mt-2';
+      const providerText = job.provider ? `供应商：${job.provider}` : '';
+      const modelText = job.usedModel ? `模型：${job.usedModel}` : '';
+      info.textContent = [providerText, modelText].filter(Boolean).join(' · ');
+      body.appendChild(info);
+    }
+
+    card.appendChild(body);
+    col.appendChild(card);
+    return col;
+  }
+
+  if (gameForm) {
+    gameForm.addEventListener('submit', async (evt) => {
+      evt.preventDefault();
+      if (!gameForm.checkValidity()) {
+        gameForm.classList.add('was-validated');
+        return;
+      }
+
+      const prompt = gamePromptInput.value.trim();
+      try {
+        const resp = await apiPost('/api/game/generate', { prompt });
+        const jobId = resp.jobId;
+        const job = { id: jobId, status: 'queued', prompt, type: 'game' };
+        const card = renderGameJobCard(job);
+        card.classList.add(`placeholder-${jobId}`);
+        gameJobs.prepend(card);
+        pollJob(jobId, 'game');
+        refreshStats();
+      } catch (err) {
+        console.error(err);
+        showError(err.message || '游戏任务创建失败');
       }
     });
   }
