@@ -599,52 +599,29 @@
 
   function renderGameJobCard(job) {
     const col = document.createElement('div');
-    col.className = 'col-12 col-md-6';
+    col.className = 'col-12';
 
     const card = document.createElement('div');
     card.className = 'result-card';
 
     const body = document.createElement('div');
-    body.className = 'card-body small';
-
-    const title = document.createElement('h6');
-    title.className = 'card-title';
-    title.textContent = `任务 #${job.id.slice(0, 6)}`;
-
-    const status = document.createElement('span');
-    status.className = 'badge ms-2 ' + (job.status === 'completed' ? 'bg-success' : 'bg-secondary');
-    status.textContent = job.status === 'completed' ? '已完成' : job.status === 'queued' ? '排队中' : '进行中';
-
-    const desc = document.createElement('p');
-    desc.className = 'mt-2 mb-2 text-secondary';
-    desc.textContent = job.prompt;
-
-    body.appendChild(title);
-    body.appendChild(status);
-    body.appendChild(desc);
-
-    if (job.warning) {
-      const warn = document.createElement('div');
-      warn.className = 'small mt-2 text-warning';
-      warn.textContent = job.warning;
-      body.appendChild(warn);
-    }
+    body.className = 'card-body p-2';
 
     if (job.status === 'completed' && job.assetId && job.html) {
       const iframeWrap = document.createElement('div');
-      iframeWrap.className = 'ratio ratio-16x9 rounded overflow-hidden bg-light mb-2';
+      iframeWrap.className = 'ratio ratio-16x9 rounded overflow-hidden bg-light';
       const iframe = document.createElement('iframe');
       iframe.sandbox = 'allow-scripts';
       iframe.srcdoc = job.html;
       iframe.title = '生成的小游戏预览';
       iframe.className = 'w-100 h-100 border-0';
-      iframe.style.minHeight = '280px';
+      iframe.style.minHeight = '320px';
       iframeWrap.appendChild(iframe);
       body.appendChild(iframeWrap);
     } else if (job.status === 'failed') {
       const errEl = document.createElement('div');
-      errEl.className = 'small text-danger';
-      errEl.textContent = job.error || '生成失败';
+      errEl.className = 'small text-danger p-2';
+      errEl.textContent = '小游戏生成失败，请重试';
       body.appendChild(errEl);
     } else {
       const progress = document.createElement('div');
@@ -652,18 +629,8 @@
       const bar = document.createElement('div');
       bar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-secondary';
       bar.style.width = '60%';
-      bar.textContent = '生成中（约10-30秒）…';
       progress.appendChild(bar);
       body.appendChild(progress);
-    }
-
-    if (job.status === 'completed' && (job.provider || job.usedModel)) {
-      const info = document.createElement('div');
-      info.className = 'small text-secondary mt-2';
-      const providerText = job.provider ? `供应商：${job.provider}` : '';
-      const modelText = job.usedModel ? `模型：${job.usedModel}` : '';
-      info.textContent = [providerText, modelText].filter(Boolean).join(' · ');
-      body.appendChild(info);
     }
 
     card.appendChild(body);

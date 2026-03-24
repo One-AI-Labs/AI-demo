@@ -134,6 +134,93 @@ async function callOpenRouter({ model, input, extra = {} }) {
   return res.json();
 }
 
+function getRelayConfig() {
+  const baseUrl = (process.env.RELAY_BASE_URL || '').trim();
+  const apiKey = (process.env.RELAY_API_KEY || '').trim();
+  if (!baseUrl || !apiKey) {
+    throw new Error('缺少 RELAY_BASE_URL 或 RELAY_API_KEY 环境变量');
+  }
+  return { baseUrl: baseUrl.replace(/\/+$/, ''), apiKey };
+}
+
+async function callRelay({ path, method = 'POST', body }) {
+  const { baseUrl, apiKey } = getRelayConfig();
+  const url = `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Relay 调用失败: ${res.status} ${text}`);
+  }
+  return res.json();
+}
+
+function extractTextFromChatCompletion(data) {
+  const content = data?.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(part => (typeof part === 'string' ? part : part?.text || ''))
+      .join('\n')
+      .trim();
+  }
+  return '';
+}
+
+function toDataUrlFromB64(b64, mime = 'image/png') {
+  if (!b64) return null;
+  return `data:${mime};base64,${b64}`;
+}
+
+function extractRelayImageUrl(data) {
+  const item = data?.data?.[0] || data?.output?.[0] || null;
+  return item?.url || item?.image_url || toDataUrlFromB64(item?.b64_json);
+}
+
+function extractRelayVideoUrl(data) {
+  return data?.video_url
+    || data?.media_url
+    || data?.data?.output
+    || data?.data?.outputs?.[0]
+    || data?.output?.video_url
+    || data?.output?.url
+    || data?.output
+    || null;
+}
+
+function extractRelayTaskId(data) {
+  return data?.id || data?.task_id || data?.data?.id || data?.data?.task_id || null;
+}
+
+function normalizeRelayStatus(data) {
+  return String(data?.status || data?.task_status || data?.data?.status || '').toLowerCase();
+}
+
+async function waitForRelayVideoTask(taskId, maxWaitMs = 120000, intervalMs = 2500) {
+  const statusPath = process.env.RELAY_VIDEO_STATUS_PATH || '/v2/videos/generations';
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    const taskData = await callRelay({ path: `${statusPath.replace(/\/+$/, '')}/${taskId}`, method: 'GET' });
+    const status = normalizeRelayStatus(taskData);
+    const videoUrl = extractRelayVideoUrl(taskData) || extractRelayVideoUrl(taskData?.data);
+    if ((status === 'succeeded' || status === 'completed' || status === 'success') && videoUrl) {
+      return { taskData, videoUrl };
+    }
+    if (status === 'failed' || status === 'canceled' || status === 'cancelled') {
+      throw new Error(`Relay 视频任务失败，状态: ${status}`);
+    }
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('Relay 视频任务超时');
+}
+
 async function callDashscopeApp({ prompt }) {
   const apiKey = process.env.DASHSCOPE_API_KEY;
   const appId = process.env.DASHSCOPE_APP_ID;
@@ -496,16 +583,35 @@ h1{font-size:1.5rem;margin-bottom:1rem}
 function extractHtmlFromLLMResponse(raw) {
   if (!raw || typeof raw !== 'string') return null;
   const trimmed = raw.trim();
-  // 尝试提取 ```html 或 ``` 代码块
+  // 1. 尝试提取 ```html 或 ``` 代码块
   const codeBlockMatch = trimmed.match(/```(?:html)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
     return codeBlockMatch[1].trim();
   }
-  // 纯 HTML 文本（以 doctype 或 html 开头）
+  // 2. 直接以 doctype/html 开头
   if (/^\s*<!DOCTYPE\s/i.test(trimmed) || /^\s*<html\s/i.test(trimmed) || trimmed.startsWith('<html>')) {
     return trimmed;
   }
+  // 3. 从中间某处开始有 HTML（模型先输出了对话再给代码）：提取 <!DOCTYPE ... </html>
+  const htmlBlockMatch = trimmed.match(/<!DOCTYPE\s+html[^>]*>[\s\S]*?<\/html>/i);
+  if (htmlBlockMatch) {
+    return htmlBlockMatch[0];
+  }
+  // 4. 兜底：尝试从 <html 开始到 </html>
+  const htmlTagMatch = trimmed.match(/<html[\s\S]*?<\/html>/i);
+  if (htmlTagMatch) {
+    return '<!DOCTYPE html>\n' + htmlTagMatch[0];
+  }
   return trimmed;
+}
+
+function isLikelyHtmlDocument(text) {
+  if (!text || typeof text !== 'string') return false;
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+  return (normalized.includes('<html') && normalized.includes('</html>'))
+    || (normalized.includes('<body') && normalized.includes('</body>'))
+    || normalized.startsWith('<!doctype html');
 }
 
 // AI 对话
@@ -516,12 +622,13 @@ app.post('/api/chat/generate', async (req, res) => {
       return res.status(400).json({ error: 'messages 必须为非空数组' });
     }
 
-    const prompt = messages
-      .map(m => `${m.role || 'user'}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
-      .join('\n');
-
-    const dashResp = await callDashscopeApp({ prompt });
-    const outputText = dashResp?.output?.text || '[无响应内容]';
+    const model = process.env.RELAY_CHAT_MODEL || 'gpt-4o-mini';
+    const relayResp = await callRelay({
+      path: process.env.RELAY_CHAT_PATH || '/v1/chat/completions',
+      method: 'POST',
+      body: { model, messages }
+    });
+    const outputText = extractTextFromChatCompletion(relayResp) || '[无响应内容]';
 
     const data = {
       output: [
@@ -533,8 +640,8 @@ app.post('/api/chat/generate', async (req, res) => {
 
     res.json({
       data,
-      usedModel: dashResp?.usage?.models?.[0]?.model_id || 'dashscope-app',
-      provider: 'dashscope'
+      usedModel: relayResp?.model || model,
+      provider: 'relay'
     });
   } catch (err) {
     console.error(err);
@@ -564,33 +671,35 @@ app.post('/api/image/generate', async (req, res) => {
     type: 'image',
     status: 'queued',
     prompt,
-    provider: 'dashscope'
+    provider: 'relay'
   });
 
   (async () => {
     try {
       jobs.set(jobId, { ...jobs.get(jobId), status: 'running' });
-      const createResp = await createDashscopeImageTask({ prompt, style, size });
-      const taskId = createResp?.output?.task_id;
-      if (!taskId) {
-        throw new Error('DashScope 未返回 task_id');
+      const model = process.env.RELAY_IMAGE_MODEL || 'gpt-image-1';
+      const imageResp = await callRelay({
+        path: process.env.RELAY_IMAGE_PATH || '/v1/images/generations',
+        method: 'POST',
+        body: { model, prompt, size, n: 1, style }
+      });
+      const imageUrl = extractRelayImageUrl(imageResp);
+      if (!imageUrl) {
+        throw new Error('Relay 图像接口未返回图片 URL');
       }
-
-      const taskData = await waitForDashscopeTask(taskId);
-      const imageUrl = taskData?.output?.results?.[0]?.url || null;
       const assetId = uuidv4();
       assets.set(assetId, {
         type: 'image',
-        raw: taskData,
-        usedModel: process.env.DASHSCOPE_IMAGE_MODEL || 'wanx-v1',
-        provider: 'dashscope',
+        raw: imageResp,
+        usedModel: imageResp?.model || model,
+        provider: 'relay',
         imageUrl
       });
       jobs.set(jobId, {
         ...jobs.get(jobId),
         status: 'completed',
         assetId,
-        usedModel: process.env.DASHSCOPE_IMAGE_MODEL || 'wanx-v1'
+        usedModel: imageResp?.model || model
       });
     } catch (err) {
       console.error(err);
@@ -667,9 +776,9 @@ app.post('/api/seedance/callback', (req, res) => {
   }
 });
 
-// 文生视频（异步任务：立刻返回 jobId，后台等待 Seedance 返回 video_url）
+// 文生视频（异步任务：立刻返回 jobId，后台等待 Relay 返回 video_url）
 app.post('/api/video/generate', (req, res) => {
-  const { prompt, duration = 5 } = req.body || {};
+  const { prompt, duration = 5, aspectRatio = '16:9' } = req.body || {};
   if (!prompt) return res.status(400).json({ error: 'prompt 不能为空' });
 
   const jobId = uuidv4();
@@ -678,45 +787,49 @@ app.post('/api/video/generate', (req, res) => {
     type: 'video',
     status: 'queued',
     prompt,
-    provider: 'seedance'
+    provider: 'relay'
   });
 
   (async () => {
     try {
-      // 本地演示更稳定：默认不依赖 callback_url（避免 Seedance 回调打不到 localhost）
-      const taskResp = await createSeedanceVideoTask({
-        prompt,
-        duration,
-        callbackUrl: null
+      const model = process.env.RELAY_VIDEO_MODEL || 'seedance-v1';
+      const createPath = process.env.RELAY_VIDEO_CREATE_PATH || '/v2/videos/generations';
+      const createResp = await callRelay({
+        path: createPath,
+        method: 'POST',
+        body: { model, prompt, duration, aspect_ratio: aspectRatio }
       });
 
-      const success = taskResp?.success === true;
-      const data = taskResp?.data || {};
-      const status = String(data?.status || data?.task_status || '').toLowerCase();
-      const videoUrl = data?.video_url || data?.output?.video_url || data?.output || null;
-      const theirTaskId = data?.task_id || taskResp?.task_id || null;
+      const immediateUrl = extractRelayVideoUrl(createResp) || extractRelayVideoUrl(createResp?.data);
+      let finalUrl = immediateUrl;
+      let raw = createResp;
+      if (!finalUrl) {
+        const taskId = extractRelayTaskId(createResp);
+        if (!taskId) {
+          throw new Error('Relay 视频任务未返回 task_id');
+        }
+        const waited = await waitForRelayVideoTask(taskId);
+        finalUrl = waited.videoUrl;
+        raw = waited.taskData;
+      }
 
-      if (success && (status === 'succeeded' || status === 'completed') && videoUrl) {
+      if (finalUrl) {
         const assetId = uuidv4();
-        const usedModel = data?.model || process.env.SEEDANCE_VIDEO_MODEL || 'seedance';
+        const usedModel = raw?.model || model;
         assets.set(assetId, {
           type: 'video',
-          mediaUrl: videoUrl,
-          provider: 'seedance',
+          mediaUrl: finalUrl,
+          provider: 'relay',
           usedModel,
-          raw: taskResp
+          raw
         });
         jobs.set(jobId, { ...jobs.get(jobId), status: 'completed', assetId, usedModel });
       } else {
-        throw new Error(`Seedance 未返回 succeeded video_url，status=${status}, task_id=${theirTaskId || 'n/a'}`);
+        throw new Error('Relay 视频接口未返回 video_url');
       }
     } catch (err) {
       console.error(err);
-      const msg = err?.message || String(err || '');
-      const usedUp = msg.toLowerCase().includes('used_up') || msg.toLowerCase().includes('balance');
-      const warning = usedUp
-        ? 'Seedance 额度不足（used_up）。请在 Ace Data Cloud 给 Seedance 视频生成充值/申请额度后重试。'
-        : (msg || '视频生成失败');
+      const warning = err?.message || '视频生成失败';
       if (DEMO_SAFE_MODE) {
         const assetId = uuidv4();
         assets.set(assetId, {
@@ -815,17 +928,17 @@ app.post('/api/music/generate', async (req, res) => {
 });
 
 // 文生小游戏（异步任务：LLM 生成 HTML 单文件小游戏）
-// 优先使用 DashScope（国内可用），OpenRouter 作为备选（需 VPN）
-const GAME_SYSTEM_PROMPT = `你是一个 HTML5 小游戏生成专家。根据用户的自然语言描述，生成一个完整、可独立运行的 HTML 单文件小游戏。
+// 统一走中转站（Relay）
+const GAME_SYSTEM_PROMPT = `你是一个 HTML5 小游戏代码生成器。你的任务：根据用户描述，输出一个可运行的完整 HTML 单文件小游戏。
 
-要求：
-1. 输出必须是完整的 HTML 文档，包含 <!DOCTYPE html>、<head>、<body>、内嵌 <style> 和 <script>
-2. 不要使用 markdown 代码块包裹，直接输出纯 HTML 文本
-3. 游戏需在单文件内完成，不依赖外部 CDN（可使用内联样式和脚本）
-4. 确保游戏可玩、有明确的交互反馈
-5. 适配移动端和平板触控，响应式布局`;
-const gameModels = parseModelList(process.env.OPENROUTER_CHAT_MODELS, ['openai/gpt-4o-mini', 'anthropic/claude-3.5-haiku', 'google/gemini-2.0-flash-001']);
+【严格规则】
+1. 你的回复必须是且只能是完整的 HTML 代码，第一行从 <!DOCTYPE html> 开始，最后一行以 </html> 结束
+2. 禁止输出任何解释、说明、对话或多余文字，只输出 HTML
+3. 不要用 markdown 代码块包裹，直接输出裸 HTML 文本
+4. 单文件内完成，内嵌 <style> 和 <script>，不依赖外部 CDN
+5. 确保游戏可玩、有交互反馈，适配触控
 
+【输出格式】直接以 <!DOCTYPE html> 开头，无任何前导文字。`;
 app.post('/api/game/generate', (req, res) => {
   const { prompt } = req.body || {};
   if (!prompt) {
@@ -838,48 +951,42 @@ app.post('/api/game/generate', (req, res) => {
     type: 'game',
     status: 'queued',
     prompt,
-    provider: 'dashscope'
+    provider: 'relay'
   });
 
   (async () => {
     try {
       jobs.set(jobId, { ...jobs.get(jobId), status: 'running' });
 
-      const fullPrompt = GAME_SYSTEM_PROMPT + '\n\n请根据以下描述生成一个可运行的 HTML5 小游戏：\n\n' + prompt;
+      const userPrompt = `请根据以下描述生成一个可运行的 HTML5 小游戏，直接输出 HTML 代码，不要任何解释：\n\n${prompt}`;
       let rawText = '';
-      let usedModel = 'dashscope-app';
-
-      // 1. 优先 DashScope（国内直连可用）
-      try {
-        const dashResp = await callDashscopeApp({ prompt: fullPrompt });
-        rawText = dashResp?.output?.text || dashResp?.output?.[0]?.text || '';
-        usedModel = dashResp?.usage?.models?.[0]?.model_id || 'dashscope-app';
-      } catch (dashErr) {
-        console.warn('DashScope 游戏生成失败，尝试 OpenRouter:', dashErr.message);
-        // 2. 备选 OpenRouter（需 VPN/非大陆网络）
-        const input = [
-          { type: 'message', role: 'user', content: [{ type: 'input_text', text: fullPrompt }] }
-        ];
-        const { data } = await callOpenRouterWithFallback({
-          models: gameModels,
-          input,
-          extra: { max_output_tokens: 16000 }
-        });
-        rawText = data?.output?.[0]?.content?.[0]?.text || data?.choices?.[0]?.message?.content || '';
-        usedModel = data?.model || 'openrouter';
-      }
+      const usedModel = process.env.RELAY_GAME_MODEL || process.env.RELAY_CHAT_MODEL || 'gpt-4o-mini';
+      const relayResp = await callRelay({
+        path: process.env.RELAY_GAME_PATH || process.env.RELAY_CHAT_PATH || '/v1/chat/completions',
+        method: 'POST',
+        body: {
+          model: usedModel,
+          messages: [
+            { role: 'system', content: GAME_SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt }
+          ]
+        }
+      });
+      rawText = extractTextFromChatCompletion(relayResp) || '';
 
       const html = extractHtmlFromLLMResponse(rawText);
 
-      if (!html || html.length < 100) {
-        throw new Error('LLM 未返回有效的 HTML 内容');
+      if (!html || html.length < 100 || !isLikelyHtmlDocument(html)) {
+        throw new Error('LLM 未返回有效 HTML 页面内容');
       }
 
       const assetId = uuidv4();
+      const provider = 'relay';
+      console.log(`[文生小游戏] 完成 job=${jobId.slice(0, 8)} 模型=${usedModel} provider=${provider}`);
       assets.set(assetId, {
         type: 'game',
         html,
-        provider: usedModel.includes('dashscope') ? 'dashscope' : 'openrouter',
+        provider,
         usedModel,
         raw: { text: rawText }
       });
