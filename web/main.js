@@ -618,6 +618,139 @@
       iframe.style.minHeight = '320px';
       iframeWrap.appendChild(iframe);
       body.appendChild(iframeWrap);
+
+      // ===== 可修改面板：通过 postMessage 控制 iframe 内的 window.GameAPI =====
+      const postToGame = (payload) => {
+        try {
+          iframe.contentWindow && iframe.contentWindow.postMessage(payload, '*');
+        } catch (e) {}
+      };
+
+      const modPanel = document.createElement('div');
+      modPanel.className = 'mt-2 p-2 rounded border bg-light';
+      modPanel.innerHTML = `
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-game-cmd="pause">暂停</button>
+          <button type="button" class="btn btn-sm btn-outline-primary" data-game-cmd="start">继续</button>
+          <button type="button" class="btn btn-sm btn-outline-warning" data-game-cmd="reset">重置</button>
+        </div>
+
+        <div class="row g-2 mt-2">
+          <div class="col-12 col-md-6">
+            <label class="form-label small mb-1" for="gameDifficulty-${job.id}">难度（difficulty）</label>
+            <select class="form-select form-select-sm" id="gameDifficulty-${job.id}">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label small mb-1" for="gameNickname-${job.id}">修改游戏（用于二次修改 HTML）</label>
+            <input class="form-control form-control-sm" id="gameNickname-${job.id}" type="text"
+              placeholder="例如：张三" value="玩家" />
+          </div>
+        </div>
+
+        <div class="d-flex gap-2 mt-2">
+          <button type="button" class="btn btn-sm btn-secondary" data-game-action="applyConfig">应用难度</button>
+          <button type="button" class="btn btn-sm btn-primary" data-game-action="remixHtml">再次修改HTML</button>
+        </div>
+        <div class="small text-secondary mt-2">说明：再次修改会基于旧 HTML 重新生成一份“改昵称版”，并在重新加载后继续保留你选的难度。</div>
+      `;
+
+      body.appendChild(modPanel);
+
+      // 按钮/表单事件
+      modPanel.querySelectorAll('[data-game-cmd]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const cmd = btn.getAttribute('data-game-cmd');
+          if (!cmd) return;
+          postToGame({ type: 'GAME_COMMAND', command: cmd });
+        });
+      });
+
+      const difficultySelect = modPanel.querySelector(`#gameDifficulty-${job.id}`);
+      const nicknameInput = modPanel.querySelector(`#gameNickname-${job.id}`);
+      if (difficultySelect) {
+        difficultySelect.addEventListener('change', () => {
+          postToGame({
+            type: 'GAME_SET_CONFIG',
+            config: {
+              difficulty: Number(difficultySelect.value),
+              nickname: nicknameInput ? String(nicknameInput.value || '').trim() : undefined
+            }
+          });
+        });
+      }
+
+      const applyConfigBtn = modPanel.querySelector('[data-game-action="applyConfig"]');
+      if (applyConfigBtn && difficultySelect) {
+        applyConfigBtn.addEventListener('click', () => {
+          postToGame({
+            type: 'GAME_SET_CONFIG',
+            config: {
+              difficulty: Number(difficultySelect.value),
+              nickname: nicknameInput ? String(nicknameInput.value || '').trim() : undefined
+            }
+          });
+        });
+      }
+
+      const remixBtn = modPanel.querySelector('[data-game-action="remixHtml"]');
+      if (remixBtn && nicknameInput && difficultySelect) {
+        remixBtn.addEventListener('click', async () => {
+          const nickname = String(nicknameInput.value || '').trim();
+          if (!nickname) {
+            showError('请输入昵称');
+            return;
+          }
+          const difficulty = Number(difficultySelect.value);
+          if (!Number.isFinite(difficulty) || difficulty < 1) {
+            showError('难度必须是大于等于 1 的数字');
+            return;
+          }
+
+          const oldText = remixBtn.textContent;
+          remixBtn.disabled = true;
+          remixBtn.textContent = '再次修改中...';
+
+          try {
+            // 调用后端：基于旧 HTML 重新生成一份“改昵称版”
+            const resp = await apiPost('/api/game/remix', {
+              assetId: job.assetId,
+              nickname,
+              difficulty
+            });
+
+            if (!resp || !resp.html) throw new Error('再次修改返回缺少 html');
+
+            // 重载 iframe，并在载入后继续下发难度（难度保留）
+            await new Promise(resolve => {
+              const handler = () => {
+                try {
+                  postToGame({
+                    type: 'GAME_SET_CONFIG',
+                    config: { difficulty, nickname }
+                  });
+                } finally {
+                  iframe.removeEventListener('load', handler);
+                  resolve();
+                }
+              };
+              iframe.addEventListener('load', handler, { once: true });
+              iframe.srcdoc = resp.html;
+            });
+          } catch (err) {
+            console.error(err);
+            showError(err.message || '再次修改失败');
+          } finally {
+            remixBtn.disabled = false;
+            remixBtn.textContent = oldText;
+          }
+        });
+      }
     } else if (job.status === 'failed') {
       const errEl = document.createElement('div');
       errEl.className = 'small text-danger p-2';

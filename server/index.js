@@ -599,14 +599,161 @@ function buildMockGameHtml() {
 h1{font-size:1.5rem;margin-bottom:1rem}
 .btn{font-size:1.2rem;padding:1rem 2rem;border:0;border-radius:12px;background:#fff;color:#3a4fb8;cursor:pointer;font-weight:600;transition:transform .2s}
 .btn:hover{transform:scale(1.05)}
-#count{font-size:3rem;margin:1.5rem 0;font-weight:800}</style>
+#count{font-size:3rem;margin:1.5rem 0;font-weight:800}.small{opacity:.9;font-size:.9rem;margin-top:.75rem}</style>
 </head>
 <body>
 <h1>点击计数小游戏（演示兜底）</h1>
 <div id="count">0</div>
-<button class="btn" onclick="document.getElementById('count').textContent=+document.getElementById('count').textContent+1">点我+1</button>
+<div id="nickname" class="small">玩家</div>
+<button class="btn" id="btn" type="button">点我+1</button>
+<div class="small">支持外部控制：pause / start / reset / difficulty</div>
+<script>
+(function () {
+  var config = { difficulty: 1, nickname: '玩家' };
+  var running = true;
+  var count = 0;
+
+  var countEl = document.getElementById('count');
+  var nicknameEl = document.getElementById('nickname');
+  var btnEl = document.getElementById('btn');
+
+  function updateBtn() {
+    var step = Number(config.difficulty);
+    if (!Number.isFinite(step) || step < 1) step = 1;
+    btnEl.textContent = '点我+' + step;
+  }
+
+  function render() {
+    countEl.textContent = String(count);
+    if (nicknameEl) nicknameEl.textContent = String(config.nickname || '');
+    updateBtn();
+  }
+
+  function click() {
+    if (!running) return;
+    var step = Number(config.difficulty);
+    if (!Number.isFinite(step) || step < 1) step = 1;
+    count += step;
+    render();
+  }
+
+  btnEl.addEventListener('click', click);
+
+  window.GameAPI = {
+    setConfig: function (cfg) {
+      if (cfg && typeof cfg === 'object') {
+        if (cfg.difficulty !== undefined) {
+          var v = Number(cfg.difficulty);
+          if (Number.isFinite(v)) config.difficulty = v;
+        }
+        if (cfg.nickname !== undefined) {
+          config.nickname = String(cfg.nickname);
+        }
+      }
+      render();
+    },
+    reset: function () {
+      count = 0;
+      running = true;
+      render();
+    },
+    start: function () {
+      running = true;
+    },
+    pause: function () {
+      running = false;
+    },
+    applyMod: function (mod) {
+      if (!mod || typeof mod !== 'object') return;
+      if (mod.type === 'difficulty') {
+        var v = Number(mod.value);
+        if (Number.isFinite(v)) config.difficulty = v;
+        render();
+      } else if (mod.type === 'instruction' && typeof mod.text === 'string') {
+        // 兜底也尽量支持用户输入的“难度=4 / difficulty 4”
+        var t = mod.text;
+        var m = t.match(/(?:难度|difficulty|level)\s*(?:=|:|\s)?\s*(\d+)/i);
+        if (m && m[1]) {
+          var v2 = Number(m[1]);
+          if (Number.isFinite(v2) && v2 >= 1) {
+            config.difficulty = v2;
+            render();
+          }
+        }
+      }
+    }
+  };
+
+  window.addEventListener('message', function (evt) {
+    var d = evt && evt.data;
+    if (!d || typeof d !== 'object') return;
+    if (!window.GameAPI) return;
+
+    if (d.type === 'GAME_SET_CONFIG') {
+      window.GameAPI.setConfig(d.config || {});
+      return;
+    }
+    if (d.type === 'GAME_COMMAND') {
+      if (d.command === 'pause') window.GameAPI.pause();
+      if (d.command === 'start') window.GameAPI.start();
+      if (d.command === 'reset') window.GameAPI.reset();
+      return;
+    }
+    if (d.type === 'GAME_APPLY_MOD') {
+      window.GameAPI.applyMod(d.mod || {});
+      return;
+    }
+  });
+
+  try {
+    window.parent && window.parent.postMessage({ type: 'GAME_READY', game: 'mock' }, '*');
+  } catch (e) {}
+
+  render();
+})();
+</script>
 </body>
 </html>`;
+}
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeJsString(s) {
+  return String(s || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r?\n/g, '\\n')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"');
+}
+
+/** 失败兜底用：尽量在旧 HTML 中替换昵称文本/变量（仅用于 DEMO_SAFE_MODE） */
+function patchNicknameInHtml(oldHtml, nickname) {
+  if (!oldHtml || typeof oldHtml !== 'string') return oldHtml;
+  const escHtml = escapeHtml(nickname);
+  const escJs = escapeJsString(nickname);
+
+  let h = oldHtml;
+
+  // 替换显式 id="nickname"/span/div
+  h = h.replace(/(<(div|span)[^>]*\bid=['"]nickname['"][^>]*>)[\s\S]*?(<\/\2>)/i, `$1${escHtml}$3`);
+
+  // 替换 input 的 value/placeholder（id/name 包含 nickname/playerName/player_name）
+  h = h.replace(/(<input[^>]*(?:id|name)=['"][^'"]*nickname[^'"]*['"][^>]*\bvalue=)(['"])[^'"]*(\2)/i, `$1$2${escHtml}$3`);
+  h = h.replace(/(<input[^>]*(?:id|name)=['"][^'"]*nickname[^'"]*['"][^>]*\bplaceholder=)(['"])[^'"]*(\2)/i, `$1$2${escHtml}$3`);
+
+  // 替换 JS 字符串变量（仅对常见变量名）
+  h = h.replace(/(\b(?:nickname|playerName|player_name)\b\s*=\s*)(['"`])([^'"`]*?)\2/gim, (m, p1, q, p3) => {
+    return p1 + q + escJs + q;
+  });
+
+  return h;
 }
 
 function extractHtmlFromLLMResponse(raw) {
@@ -1002,6 +1149,47 @@ const GAME_SYSTEM_PROMPT = `你是一个 HTML5 小游戏代码生成器。你的
 4. 单文件内完成，内嵌 <style> 和 <script>，不依赖外部 CDN
 5. 确保游戏可玩、有交互反馈，适配触控
 
+【必须实现：可被外部持续修改的协议】
+A) 在 <script> 中声明并暴露全局对象：
+  window.GameAPI = {
+    setConfig(cfg),      // 接收配置对象（例如难度、速度、关卡数）
+    reset(),             // 重置到初始状态并继续可操作
+    start(),             // 开始/继续游戏（不需要就空实现，但必须存在）
+    pause(),             // 暂停游戏（不需要就空实现，但必须存在）
+    applyMod(mod)        // 应用“高级修改指令”，例如 {type:'difficulty', value:3}
+  }
+  注意：必须真的写出 window.GameAPI（不能只写伪代码）
+
+B) 必须监听父页面通过 postMessage 下发控制指令：
+  window.addEventListener('message', (evt) => {
+    const d = evt && evt.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'GAME_SET_CONFIG') window.GameAPI.setConfig(d.config || {});
+    if (d.type === 'GAME_COMMAND') {
+      if (d.command === 'pause') window.GameAPI.pause();
+      if (d.command === 'start') window.GameAPI.start();
+      if (d.command === 'reset') window.GameAPI.reset();
+    }
+    if (d.type === 'GAME_APPLY_MOD') window.GameAPI.applyMod(d.mod || {});
+  });
+
+C) 游戏的核心逻辑必须能读取“配置/修改指令”并产生可见变化：
+  - 至少要让 applyMod({type:'difficulty', value:N}) 或 setConfig({difficulty:N}) 对玩法参数（如步长/速度/得分倍率/关卡节奏）产生效果。
+  - 若实现简单也可以，但要保证 change 后游戏行为有差异。
+
+【输出格式】直接以 <!DOCTYPE html> 开头，无任何前导文字。`;
+
+const GAME_NICKNAME_REMIX_SYSTEM_PROMPT = `你是 HTML5 小游戏昵称补丁器。你会收到“旧的完整 HTML（单文件小游戏）”以及“用户新的昵称”。
+
+【严格规则】
+1. 你的回复必须是且只能是完整的 HTML 代码，第一行从 <!DOCTYPE html> 开始，最后一行以 </html> 结束
+2. 禁止输出任何解释、说明、对话或多余文字，只输出 HTML
+3. 不要用 markdown 代码块包裹，直接输出裸 HTML 文本
+4. 单文件内完成，内嵌 <style> 和 <script>，不依赖外部 CDN
+5. 必须保留旧 HTML 中的 window.GameAPI 协议（setConfig/reset/start/pause/applyMod）以及 window.addEventListener('message', ...) 的监听逻辑（至少要能正常响应父页面 postMessage 指令）
+6. “难度（difficulty）相关”逻辑必须保持不变：不要修改 difficulty 的计算、步长/速度/倍率/规则开关等核心行为
+7. 只修改与“昵称”相关的内容：例如昵称变量/默认值、输入框 placeholder/value、界面上显示“昵称/玩家名”的文本
+
 【输出格式】直接以 <!DOCTYPE html> 开头，无任何前导文字。`;
 app.post('/api/game/generate', (req, res) => {
   const { prompt } = req.body || {};
@@ -1025,6 +1213,10 @@ app.post('/api/game/generate', (req, res) => {
       const userPrompt = `请根据以下描述生成一个可运行的 HTML5 小游戏，直接输出 HTML 代码，不要任何解释：\n\n${prompt}`;
       let rawText = '';
       const usedModel = process.env.RELAY_GAME_MODEL || process.env.RELAY_CHAT_MODEL || 'gpt-4o-mini';
+      console.log(
+        `[文生小游戏] 开始 job=${jobId.slice(0, 8)} model=${usedModel}` +
+          ` (RELAY_GAME_MODEL=${process.env.RELAY_GAME_MODEL ? '已设' : '未设'}, RELAY_CHAT_MODEL=${process.env.RELAY_CHAT_MODEL ? '已设' : '未设'})`
+      );
       const relayResp = await callRelay({
         path: process.env.RELAY_GAME_PATH || process.env.RELAY_CHAT_PATH || '/v1/chat/completions',
         method: 'POST',
@@ -1042,13 +1234,15 @@ app.post('/api/game/generate', (req, res) => {
       html = wrapGameHtmlFragmentIfNeeded(html);
       html = normalizeGameHtml(html);
 
-      if (!html || html.length < 80 || !isLikelyHtmlDocument(html)) {
+      const hasGameApi = /window\.GameAPI\b/.test(html);
+      const hasMessageListener = /addEventListener\s*\(\s*['"]message['"]\s*,?/i.test(html);
+      if (!html || html.length < 80 || !isLikelyHtmlDocument(html) || !hasGameApi || !hasMessageListener) {
         const preview = (rawText || '').slice(0, 400);
         console.error(
           `[文生小游戏] HTML 校验未通过 job=${jobId.slice(0, 8)} len=${rawText?.length || 0} preview=`,
           preview
         );
-        throw new Error('LLM 未返回有效 HTML 页面内容');
+        throw new Error('LLM 未返回符合可修改协议的 HTML 页面内容（缺少 window.GameAPI 或 message 监听）');
       }
 
       const assetId = uuidv4();
@@ -1101,6 +1295,88 @@ app.post('/api/game/generate', (req, res) => {
   void runGameJob();
 
   res.json({ jobId });
+});
+
+// 文生小游戏再次修改：基于旧 HTML 做“改昵称”补丁（保留难度逻辑）
+app.post('/api/game/remix', async (req, res) => {
+  const { assetId, nickname } = req.body || {};
+  const difficulty = req.body?.difficulty; // 当前难度由前端负责下发到 iframe；这里仅用于回填/日志
+
+  if (!assetId) return res.status(400).json({ error: 'assetId 不能为空' });
+  if (!nickname) return res.status(400).json({ error: 'nickname 不能为空' });
+
+  const asset = assets.get(assetId);
+  if (!asset || asset.type !== 'game') {
+    return res.status(404).json({ error: '资源不存在或不是游戏' });
+  }
+
+  const oldHtml = asset.html;
+  if (!oldHtml) return res.status(404).json({ error: '游戏 HTML 不存在' });
+
+  const usedModel = process.env.RELAY_GAME_MODEL || process.env.RELAY_CHAT_MODEL || 'claude-sonnet-4-6';
+  const relayPath = process.env.RELAY_GAME_PATH || process.env.RELAY_CHAT_PATH || '/v1/chat/completions';
+
+  try {
+    const patchUserPrompt = `旧HTML如下（单文件小游戏）：\n\n${oldHtml}\n\n用户新昵称：${nickname}\n\n请只做“昵称相关”的补丁修改，并严格满足：\n- 必须保留 window.GameAPI 协议与 postMessage 监听\n- 必须保持 difficulty 相关核心逻辑不变\n- 仅返回修改后的完整 HTML（从 <!DOCTYPE html> 开始，到 </html> 结束）\n`;
+
+    const relayResp = await callRelay({
+      path: relayPath,
+      method: 'POST',
+      body: {
+        model: usedModel,
+        messages: [
+          { role: 'system', content: GAME_NICKNAME_REMIX_SYSTEM_PROMPT },
+          { role: 'user', content: patchUserPrompt }
+        ]
+      }
+    });
+
+    const rawText = extractTextFromChatCompletion(relayResp) || '';
+    let html = extractHtmlFromLLMResponse(rawText);
+    html = wrapGameHtmlFragmentIfNeeded(html);
+    html = normalizeGameHtml(html);
+
+    const hasGameApi = /window\.GameAPI\b/.test(html);
+    const hasMessageListener = /addEventListener\s*\(\s*['"]message['"]\s*,?/i.test(html);
+    if (!html || html.length < 80 || !isLikelyHtmlDocument(html) || !hasGameApi || !hasMessageListener) {
+      throw new Error('再次修改后 HTML 未通过协议校验');
+    }
+
+    assets.set(assetId, {
+      ...asset,
+      html,
+      provider: 'relay',
+      usedModel,
+      remixOf: assetId,
+      remix: { nickname, difficulty },
+      raw: { oldHtml }
+    });
+
+    res.json({ assetId, html, usedModel });
+  } catch (err) {
+    console.error('文生小游戏 再次修改失败:', err?.message || err);
+    const errMsg = err?.message || String(err);
+
+    if (DEMO_SAFE_MODE) {
+      const fallbackHtml = patchNicknameInHtml(oldHtml, nickname);
+      assets.set(assetId, {
+        ...asset,
+        html: fallbackHtml,
+        provider: asset.provider || 'demo',
+        usedModel: asset.usedModel || 'demo/mock-game',
+        warning: `再次修改失败，已尽力使用兜底替换昵称。错误：${errMsg}`,
+        remix: { nickname, difficulty, fallbackUsed: true }
+      });
+      return res.json({
+        assetId,
+        html: fallbackHtml,
+        usedModel: asset.usedModel || 'demo/mock-game',
+        warning: `再次修改失败，已尽力使用兜底替换昵称。错误：${errMsg}`
+      });
+    }
+
+    res.status(500).json({ error: errMsg });
+  }
 });
 
 // 查询任务状态
