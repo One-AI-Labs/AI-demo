@@ -1,0 +1,31 @@
+/**
+ * PM2 部署示例：复制为 ecosystem.config.cjs 后按需填写 env。
+ *
+ *   cp ecosystem.config.cjs.example ecosystem.config.cjs
+ *   pm2 start ecosystem.config.cjs
+ *   pm2 save
+ *
+ * 更新环境变量后：
+ *   pm2 restart ai-demo --update-env
+ *
+ * 说明：应用会从「仓库根目录」的 .env 加载配置（见 server/index.js 中 dotenv 路径），
+ * 与 shell 的 cwd 无关。仍须把 RELAY_BASE_URL、RELAY_API_KEY 写入 /var/www/AI-demo/.env，
+ * 或在下方 env 中显式写出（二选一或合并，进程环境会覆盖同名项）。
+ */
+module.exports = {
+  apps: [
+    {
+      name: 'ai-demo',
+      cwd: '/var/www/AI-demo',
+      script: 'npm',
+      args: 'start',
+      env: {
+        NODE_ENV: 'production',
+        PORT: '3000',
+        // 若已在项目根 .env 中配置，可删去下面两行
+        // RELAY_BASE_URL: 'https://your-openai-compatible-base',
+        // RELAY_API_KEY: 'sk-...'
+      }
+    }
+  ]
+};

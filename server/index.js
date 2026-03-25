@@ -8,10 +8,14 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import fetch from 'node-fetch';
 
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+/** 仓库根目录（与 PM2 cwd、shell 当前目录无关，固定从本文件位置解析） */
+const projectRoot = path.join(__dirname, '..');
+const envPath = process.env.DOTENV_PATH
+  ? path.resolve(process.env.DOTENV_PATH)
+  : path.join(projectRoot, '.env');
+dotenv.config({ path: envPath });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -97,7 +101,7 @@ const seedanceTaskToJobId = new Map();
 const sunoTaskToJobId = new Map();
 
 // 静态前端：根路径提供 index.html / main.js；/web/* 与生产 Vercel 路径一致，避免误用 /web/main.js 时 404
-const webStatic = path.join(__dirname, '..', 'web');
+const webStatic = path.join(projectRoot, 'web');
 app.use('/web', express.static(webStatic));
 app.use(express.static(webStatic));
 
@@ -163,13 +167,38 @@ async function callRelay({ path, method = 'POST', body }) {
 }
 
 function extractTextFromChatCompletion(data) {
-  const content = data?.choices?.[0]?.message?.content;
+  if (!data || typeof data !== 'object') return '';
+  const direct =
+    (typeof data.content === 'string' && data.content)
+    || (typeof data.output === 'string' && data.output)
+    || (typeof data.output_text === 'string' && data.output_text)
+    || (typeof data.text === 'string' && data.text);
+  if (direct) return direct;
+
+  const choice =
+    data?.choices?.[0]
+    ?? data?.data?.choices?.[0]
+    ?? data?.result?.choices?.[0];
+  if (!choice) return '';
+
+  const msg = choice.message || choice.delta || {};
+  let content = msg.content ?? choice.text ?? msg.text;
+
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .map(part => (typeof part === 'string' ? part : part?.text || ''))
+      .map(part => {
+        if (typeof part === 'string') return part;
+        if (part?.text) return part.text;
+        if (typeof part?.content === 'string') return part.content;
+        return '';
+      })
       .join('\n')
       .trim();
+  }
+  if (content && typeof content === 'object') {
+    const t = content.text ?? content.content;
+    if (typeof t === 'string') return t;
   }
   return '';
 }
@@ -605,6 +634,41 @@ function extractHtmlFromLLMResponse(raw) {
   return trimmed;
 }
 
+/** 补全缺失的 </html>；部分中继/模型会截断尾部 */
+function normalizeGameHtml(html) {
+  if (!html || typeof html !== 'string') return html;
+  let h = html.trim();
+  const low = h.toLowerCase();
+  if (low.includes('<html') && low.includes('</body>') && !low.includes('</html>')) {
+    h = h.replace(/\s*<\/body>\s*$/i, '</body>\n</html>');
+  }
+  return h;
+}
+
+/**
+ * 模型只输出 body 内片段（无 html 包裹）时，包成可 iframe 的单文件页
+ */
+function wrapGameHtmlFragmentIfNeeded(s) {
+  if (!s || typeof s !== 'string') return s;
+  const t = s.trim();
+  const tl = t.toLowerCase();
+  if (tl.length < 80) return t;
+  if (tl.includes('<html') || tl.includes('<!doctype')) return t;
+  const looksLikeGame =
+    /<(script|style|canvas|button|div|svg)\b/i.test(t)
+    && !/^[\s\n]*[#>*`-]/.test(t);
+  if (looksLikeGame) {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>小游戏</title></head>
+<body>
+${t}
+</body>
+</html>`;
+  }
+  return t;
+}
+
 function isLikelyHtmlDocument(text) {
   if (!text || typeof text !== 'string') return false;
   const normalized = text.trim().toLowerCase();
@@ -954,7 +1018,7 @@ app.post('/api/game/generate', (req, res) => {
     provider: 'relay'
   });
 
-  (async () => {
+  const runGameJob = async () => {
     try {
       jobs.set(jobId, { ...jobs.get(jobId), status: 'running' });
 
@@ -974,9 +1038,16 @@ app.post('/api/game/generate', (req, res) => {
       });
       rawText = extractTextFromChatCompletion(relayResp) || '';
 
-      const html = extractHtmlFromLLMResponse(rawText);
+      let html = extractHtmlFromLLMResponse(rawText);
+      html = wrapGameHtmlFragmentIfNeeded(html);
+      html = normalizeGameHtml(html);
 
-      if (!html || html.length < 100 || !isLikelyHtmlDocument(html)) {
+      if (!html || html.length < 80 || !isLikelyHtmlDocument(html)) {
+        const preview = (rawText || '').slice(0, 400);
+        console.error(
+          `[文生小游戏] HTML 校验未通过 job=${jobId.slice(0, 8)} len=${rawText?.length || 0} preview=`,
+          preview
+        );
         throw new Error('LLM 未返回有效 HTML 页面内容');
       }
 
@@ -997,7 +1068,7 @@ app.post('/api/game/generate', (req, res) => {
         usedModel
       });
     } catch (err) {
-      console.error('文生小游戏 OpenRouter 调用失败:', err.message, err);
+      console.error('文生小游戏 Relay 调用失败:', err.message, err);
       const errMsg = err?.message || String(err);
       if (DEMO_SAFE_MODE) {
         const assetId = uuidv4();
@@ -1025,7 +1096,9 @@ app.post('/api/game/generate', (req, res) => {
         });
       }
     }
-  })();
+  };
+
+  void runGameJob();
 
   res.json({ jobId });
 });
@@ -1061,7 +1134,12 @@ app.get('/api/stats', (req, res) => {
 // 本地 node 启动；Vercel 通过 api/index.mjs 加载本文件，禁止 listen
 if (!process.env.VERCEL) {
   app.listen(PORT, () => {
+    const relayOk = !!(String(process.env.RELAY_BASE_URL || '').trim() && String(process.env.RELAY_API_KEY || '').trim());
     console.log(`AI Demo server listening on http://localhost:${PORT}`);
+    console.log(`[env] .env loaded from: ${envPath}`);
+    console.log(relayOk
+      ? '[env] Relay: 已检测到 RELAY_BASE_URL + RELAY_API_KEY'
+      : '[env] Relay: 未配置（需中转的功能将失败或进入 DEMO 兜底）');
   });
 }
 
